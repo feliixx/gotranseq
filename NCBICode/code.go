@@ -1,7 +1,15 @@
+// Package NCBICode stores codon <-> AA
+// translation.
+//
+// Relevant documentation:
+//
+//    https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi?chapter=tgencodes#SG1
+//
 package NCBICode
 
 var (
-	standard = map[string]byte{
+	// Standard the standard code
+	Standard = map[string]byte{
 		"TTT": 'F',
 		"TCT": 'S',
 		"TAT": 'Y',
@@ -67,7 +75,16 @@ var (
 		"GAG": 'E',
 		"GGG": 'G',
 	}
-	Table = map[int]map[string]byte{
-		0: standard,
+	// ************************************
+	// diff from the standard code
+	vertebrateMitochondrialeDiff = map[string]byte{
+		"AGA": '*',
+		"AGG": '*',
+		"AUA": 'M',
+		"UGA": 'W',
+	}
+	// TableDiff store the map of diff from standard code
+	TableDiff = map[int]map[string]byte{
+		2: vertebrateMitochondrialeDiff,
 	}
 )
