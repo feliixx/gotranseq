@@ -20,6 +20,9 @@ const (
 	endLine = '\n'
 	unknown = 'X'
 	space   = ' '
+	// some AA constant
+	stopByte      = '*'
+	cleanStopByte = 'X'
 	// size of the buffer for writing to file
 	maxBufferSize = 1000 * 1000 * 10
 	// max line size for sequence
@@ -78,7 +81,7 @@ func printErrorAndExit(err error) {
 }
 
 // create the code map according to the selected table code
-func createMapCode(code int) (map[uint32]byte, error) {
+func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 
 	resultMap := map[uint32]byte{}
 	twoLetterMap := map[string][]byte{}
@@ -130,11 +133,20 @@ func createMapCode(code int) (map[uint32]byte, error) {
 			resultMap[uint32Code] = m[0]
 		}
 	}
+	// if clean is specified, we want to replace all '*' by 'X' in the output
+	// sequence, so replace all occurrences of '*' directly in the ref map
+	if clean {
+		for k, v := range resultMap {
+			if v == stopByte {
+				resultMap[k] = cleanStopByte
+			}
+		}
+	}
 	return resultMap, nil
 }
 
 // read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
-func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, frames []int, reverse bool) error {
+func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, framesToGenerate []int, reverse bool) error {
 
 	// create the file to write protein sequences
 	out, err := os.Create(options.Outseq)
@@ -171,6 +183,11 @@ func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, frames [
 			// frame matrix in reverse mode because it depends on sequence
 			// length, cf convention
 			idx := make([]int, 3)
+			// if in trim mode, nb of bytes to trim (nb of successive 'X', '*' and '\n'
+			// from right end of the sequence)
+			var bytesToTrim int
+			// how many times we run Translate loop on the sequence
+			var nbRunLoop int
 
 			for sequence := range fnaSequences {
 				// if an error occured somewhere, return so
@@ -182,17 +199,30 @@ func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, frames [
 				}
 
 				size = len(sequence.Sequence)
+				nbRunLoop = 0
 
+				idx[0] = 0
+				idx[1] = 1
+				idx[2] = 2
+
+			Translate:
 				// forward mode
-				for frame := 0; frame < 3; frame++ {
+				for i, frame := range idx {
 					// only generate requested frames
-					if frames[frame] == 0 {
+					if framesToGenerate[frame] == 0 {
 						continue
 					}
 					// sequence id should look like
 					// >sequenceID_<frame> comments
 					translated.Write(sequence.ID)
-					translated.Write(suffix[frame+1])
+
+					if nbRunLoop >= 1 {
+						// Translate has been run one already, so we are
+						// in reverse mode
+						translated.Write(suffix[i+4])
+					} else {
+						translated.Write(suffix[frame+1])
+					}
 
 					if sequence.Comment != nil {
 						translated.WriteByte(space)
@@ -207,6 +237,7 @@ func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, frames [
 						if currentLength == maxLineSize {
 							currentLength = 0
 							translated.WriteByte(endLine)
+							bytesToTrim++
 						}
 						// create an uint32 from the codon, to retrieve the corresponding
 						// AA from the map
@@ -216,8 +247,14 @@ func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, frames [
 							// this may occur if the codon contains one or more
 							// unknown nucleotide ('N')
 							translated.WriteByte(unknown)
+							bytesToTrim++
 						} else {
 							translated.WriteByte(b)
+							if b == stopByte {
+								bytesToTrim++
+							} else {
+								bytesToTrim = 0
+							}
 						}
 						currentLength++
 					}
@@ -226,27 +263,43 @@ func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, frames [
 					if (size-frame)%3 == 2 {
 						if currentLength == maxLineSize {
 							translated.WriteByte(endLine)
+							bytesToTrim++
 						}
 						codonCode = uint32(sequence.Sequence[size-2]) | uint32(sequence.Sequence[size-1])<<8
 						b, ok := mapCode[codonCode]
 						if !ok {
 							translated.WriteByte(unknown)
+							bytesToTrim++
 						} else {
 							translated.WriteByte(b)
+							if b == stopByte {
+								bytesToTrim++
+							} else {
+								bytesToTrim = 0
+							}
 						}
 						// the last codon is only 1 nucleotid long, no way to guess
 						// the corresponding AA
 					} else if (size-frame)%3 == 1 {
 						if currentLength == maxLineSize {
 							translated.WriteByte(endLine)
+							bytesToTrim++
 						}
 						translated.WriteByte(unknown)
+						bytesToTrim++
 					}
+					if options.Trim && bytesToTrim > 0 {
+						// remove the last bytesToTrim bytes of the buffer
+						// as they are 'X', '*' or '\n'
+						translated.Truncate(translated.Len() - bytesToTrim)
+					}
+					bytesToTrim = 0
 					translated.WriteByte(endLine)
 				}
+				nbRunLoop++
 
 				// if in reverse mode, reverse-complement the sequence
-				if reverse {
+				if reverse && nbRunLoop < 2 {
 					// get the complementary sequence.
 					// Basically, switch
 					//   A <-> T
@@ -271,76 +324,30 @@ func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, frames [
 						sequence.Sequence[i], sequence.Sequence[j] = sequence.Sequence[j], sequence.Sequence[i]
 					}
 
-					// Staden convention: Frame -1 is the reverse-complement of the sequence
-					// having the same codon phase as frame 1. Frame -2 is the same phase as
-					// frame 2. Frame -3 is the same phase as frame 3
-					//
-					// use the matrix to keep track of the forward frame as it depends on the
-					// length of the sequence
-					switch len(sequence.Sequence) % 3 {
-					case 0:
-						idx[0] = 0
-						idx[1] = 2
-						idx[2] = 1
-					case 1:
-						idx[0] = 1
-						idx[1] = 0
-						idx[2] = 2
-					case 2:
-						idx[0] = 2
-						idx[1] = 1
-						idx[2] = 0
+					if !options.Alternative {
+						// Staden convention: Frame -1 is the reverse-complement of the sequence
+						// having the same codon phase as frame 1. Frame -2 is the same phase as
+						// frame 2. Frame -3 is the same phase as frame 3
+						//
+						// use the matrix to keep track of the forward frame as it depends on the
+						// length of the sequence
+						switch len(sequence.Sequence) % 3 {
+						case 0:
+							idx[0] = 0
+							idx[1] = 2
+							idx[2] = 1
+						case 1:
+							idx[0] = 1
+							idx[1] = 0
+							idx[2] = 2
+						case 2:
+							idx[0] = 2
+							idx[1] = 1
+							idx[2] = 0
+						}
 					}
-
-					// reverse mode, almost same code as forward mode
-					for j, frame := range idx {
-						if frames[j+3] == 0 {
-							continue
-						}
-						translated.Write(sequence.ID)
-						translated.Write(suffix[j+4])
-
-						if sequence.Comment != nil {
-							translated.WriteByte(space)
-							translated.Write(sequence.Comment)
-						}
-						translated.WriteByte(endLine)
-
-						currentLength = 0
-
-						for i := frame + 2; i < size; i += 3 {
-							if currentLength == maxLineSize {
-								currentLength = 0
-								translated.WriteByte(endLine)
-							}
-							codonCode = uint32(sequence.Sequence[i-2]) | uint32(sequence.Sequence[i-1])<<8 | uint32(sequence.Sequence[i])<<16
-							b, ok := mapCode[codonCode]
-							if !ok {
-								translated.WriteByte(unknown)
-							} else {
-								translated.WriteByte(b)
-							}
-							currentLength++
-						}
-						if (size-frame)%3 == 2 {
-							if currentLength == maxLineSize {
-								translated.WriteByte(endLine)
-							}
-							codonCode = uint32(sequence.Sequence[size-2]) | uint32(sequence.Sequence[size-1])<<8
-							b, ok := mapCode[codonCode]
-							if !ok {
-								translated.WriteByte(unknown)
-							} else {
-								translated.WriteByte(b)
-							}
-						} else if (size-frame)%3 == 1 {
-							if currentLength == maxLineSize {
-								translated.WriteByte(endLine)
-							}
-							translated.WriteByte(unknown)
-						}
-						translated.WriteByte(endLine)
-					}
+					// run the same loop, but with the reverse-complemented sequence
+					goto Translate
 				}
 				// if the buffer holds more than 10MB of data,
 				// write it to output file and reset the buffer
@@ -541,9 +548,12 @@ type Required struct {
 
 // Optional struct to store required command line args
 type Optional struct {
-	Frame     string `short:"f" long:"frame" value-name:"<code>" description:"frame"`
-	Table     int    `short:"t" long:"table" value-name:"<code>" description:"ncbi code to use" default:"0"`
-	NumWorker int    `short:"n" long:"numcpu" value-name:"<n>" description:"number of threads to use, default is number of CPU"`
+	Frame       string `short:"f" long:"frame" value-name:"<code>" description:"frame"`
+	Table       int    `short:"t" long:"table" value-name:"<code>" description:"ncbi code to use" default:"0"`
+	Clean       bool   `short:"c" long:"clean" description:"replace stop codon '*' by 'X'"`
+	Alternative bool   `short:"a" long:"alternative" description:"define frame '-1' as using the set of codons starting with the last codon of the sequence"`
+	Trim        bool   `short:"T" long:"trim" description:"removes all 'X' and '*' characters from the right end of the translation. The trimming process starts at the end and continues until the next character is not a 'X' or a '*'"`
+	NumWorker   int    `short:"n" long:"numcpu" value-name:"<n>" description:"number of threads to use, default is number of CPU"`
 }
 
 // General struct to store required command line args
@@ -579,7 +589,7 @@ func main() {
 	if options.Table < 0 || options.Table > 32 {
 		printErrorAndExit(fmt.Errorf("invalid table code: %v, must be between 0 and 31", options.Table))
 	}
-	mapCode, err := createMapCode(options.Table)
+	mapCode, err := createMapCode(options.Table, options.Clean)
 	if err != nil {
 		printErrorAndExit(err)
 	}

@@ -32,15 +32,15 @@ func BenchmarkSwitch(b *testing.B) {
 	success := 0
 	for n := 0; n < b.N; n++ {
 		switch tbytes[index] {
-		case aCode:
+		case 'A':
 			success++
-		case gCode:
+		case 'C':
 			success += 2
-		case cCode:
+		case 'G':
 			success += 3
-		case tCode:
+		case 'T':
 			success += 4
-		case nCode:
+		case 'N':
 			success--
 		default:
 			fail++
