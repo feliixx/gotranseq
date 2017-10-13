@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"sync"
@@ -73,6 +74,59 @@ type FastaSequence struct {
 	ID       []byte
 	Comment  []byte
 	Sequence []uint8
+}
+
+type fastaChannelFeeder struct {
+	IDBuffer       *bytes.Buffer
+	CommentBuffer  *bytes.Buffer
+	SequenceBuffer *bytes.Buffer
+	FastaChan      chan FastaSequence
+}
+
+type ioHandler struct {
+	in  io.Reader
+	out io.Writer
+}
+
+func (f *fastaChannelFeeder) sendFasta() error {
+	// create a fastaSequence, comments is not required
+	fastaSequence := FastaSequence{
+		ID:       make([]byte, f.IDBuffer.Len()),
+		Sequence: make([]uint8, f.SequenceBuffer.Len()),
+	}
+	// copy content of buffers to the new object
+	copy(fastaSequence.ID, f.IDBuffer.Bytes())
+	f.IDBuffer.Reset()
+
+	if f.CommentBuffer.Len() != 0 {
+		fastaSequence.Comment = make([]byte, f.CommentBuffer.Len())
+		copy(fastaSequence.Comment, f.CommentBuffer.Bytes())
+		f.CommentBuffer.Reset()
+	}
+	// convert the sequence of bytes to an array of uint8 codes,
+	// so a codon (3 nucleotides | 3 bytes ) can be represented
+	// as an uint32
+	for i, b := range f.SequenceBuffer.Bytes() {
+		switch b {
+		case 'A':
+			fastaSequence.Sequence[i] = aCode
+		case 'C':
+			fastaSequence.Sequence[i] = cCode
+		case 'G':
+			fastaSequence.Sequence[i] = gCode
+		case 'T':
+			fastaSequence.Sequence[i] = tCode
+		case 'N':
+			fastaSequence.Sequence[i] = nCode
+		default:
+			return fmt.Errorf("invalid char in sequence %v: %v", string(fastaSequence.ID), string(b))
+		}
+	}
+	// push the sequence to a buffered channel
+	f.FastaChan <- fastaSequence
+
+	f.SequenceBuffer.Reset()
+	return nil
 }
 
 func printErrorAndExit(err error) {
@@ -146,14 +200,49 @@ func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 }
 
 // read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
-func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, framesToGenerate []int, reverse bool) error {
-
-	// create the file to write protein sequences
-	out, err := os.Create(options.Outseq)
+func (i *ioHandler) readSequenceAndTranslate(options Options) error {
+	// get the codemap for codon <-> AA translation
+	mapCode, err := createMapCode(options.Table, options.Clean)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	// mask for required frames
+	framesToGenerate := make([]int, 6)
+	reverse := false
+
+	switch options.Frame {
+	case "1":
+		framesToGenerate[0] = 1
+	case "2":
+		framesToGenerate[1] = 1
+	case "3":
+		framesToGenerate[2] = 1
+	case "F":
+		for i := 0; i < 3; i++ {
+			framesToGenerate[i] = 1
+		}
+	case "-1":
+		framesToGenerate[3] = 1
+		reverse = true
+	case "-2":
+		framesToGenerate[4] = 1
+		reverse = true
+	case "-3":
+		framesToGenerate[5] = 1
+		reverse = true
+	case "R":
+		for i := 3; i < 6; i++ {
+			framesToGenerate[i] = 1
+		}
+		reverse = true
+	case "6":
+		for i := range framesToGenerate {
+			framesToGenerate[i] = 1
+		}
+		reverse = true
+	default:
+		return fmt.Errorf("wrong value for -f | --frame parameter: %s", options.Frame)
+	}
 	// a channel of fasta sequences that can be used from
 	// multiple goroutines to parrallize the job
 	fnaSequences := make(chan FastaSequence, 10)
@@ -352,7 +441,7 @@ func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, framesTo
 				// if the buffer holds more than 10MB of data,
 				// write it to output file and reset the buffer
 				if translated.Len() > maxBufferSize {
-					_, err = out.Write(translated.Bytes())
+					_, err := i.out.Write(translated.Bytes())
 					if err != nil {
 						// if this failed, push the error to the error channel so we can return
 						// it to the user
@@ -371,7 +460,7 @@ func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, framesTo
 			}
 			// some sequences left in the buffer
 			if translated.Len() > 0 {
-				_, err = out.Write(translated.Bytes())
+				_, err := i.out.Write(translated.Bytes())
 				if err != nil {
 					select {
 					case errs <- fmt.Errorf("fail to write to output file: %v", err):
@@ -383,39 +472,31 @@ func readSequenceAndTranslate(options Options, mapCode map[uint32]byte, framesTo
 			}
 		}()
 	}
-
-	// read the fasta file to feed the fastaSequence channel
-	f, err := os.Open(options.Sequence)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	//
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(i.in)
 
 	var readError error
-	// holds the nucleic sequence
-	var bufferedSequence bytes.Buffer
-	// holds the sequence ID
-	var seqID bytes.Buffer
-	// holds the comment
-	var comment bytes.Buffer
+
+	feeder := &fastaChannelFeeder{
+		IDBuffer:       bytes.NewBuffer(make([]byte, 0)),
+		CommentBuffer:  bytes.NewBuffer(make([]byte, 0)),
+		SequenceBuffer: bytes.NewBuffer(make([]byte, 0)),
+		FastaChan:      fnaSequences,
+	}
 
 	// tag the loop so we can break it from anywhere
 Loop:
 	// read the file line by line
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		// skip blank lines
-		// TODO: might return an error instead ? Fasta files
-		// with blanks lines are incorrect
+		// Fasta files with blanks lines are incorrect
 		if len(line) == 0 {
-			continue
+			readError = fmt.Errorf("invalid fasta file: empty lines are forbidden")
+			break Loop
 		}
 		// if the line starts with '>'; it's the ID of the sequence
 		if line[0] == fastaID {
 			// for the first sequence, the buffer for the ID is empty
-			if seqID.Len() > 0 {
+			if feeder.IDBuffer.Len() > 0 {
 				// if an error occurred in one of the 'inserting' goroutines,
 				// break the loop
 				select {
@@ -423,60 +504,28 @@ Loop:
 					break Loop
 				default:
 				}
-				// create a fastaSequence, comments is not required
-				fastaSequence := FastaSequence{
-					ID:       make([]byte, seqID.Len()),
-					Sequence: make([]uint8, bufferedSequence.Len()),
+				readError = feeder.sendFasta()
+				if readError != nil {
+					break Loop
 				}
-				// copy content of buffers to the new object
-				copy(fastaSequence.ID, seqID.Bytes())
-				seqID.Reset()
-
-				if comment.Len() != 0 {
-					fastaSequence.Comment = make([]byte, comment.Len())
-					copy(fastaSequence.Comment, comment.Bytes())
-					comment.Reset()
-				}
-				// convert the sequence of bytes to an array of uint8 codes,
-				// so a codon (3 nucleotides | 3 bytes ) can be represented
-				// as an uint32
-				for i, b := range bufferedSequence.Bytes() {
-					switch b {
-					case 'A':
-						fastaSequence.Sequence[i] = aCode
-					case 'C':
-						fastaSequence.Sequence[i] = cCode
-					case 'G':
-						fastaSequence.Sequence[i] = gCode
-					case 'T':
-						fastaSequence.Sequence[i] = tCode
-					case 'N':
-						fastaSequence.Sequence[i] = nCode
-					default:
-						readError = fmt.Errorf("invalid char in sequence %v: %v", string(fastaSequence.ID), string(b))
-						break Loop
-					}
-				}
-				// push the sequence to a buffered channel
-				fnaSequences <- fastaSequence
-
-				bufferedSequence.Reset()
-
 			}
 			// parse the ID of the sequence. ID is formatted like this:
 			// >sequenceID comments
 			l := bytes.SplitN(line, spaceDelim, 2)
-			seqID.Write(l[0])
+			feeder.IDBuffer.Write(l[0])
 			// if there is two arrays returned, the sequence has comment
 			if len(l) > 1 {
-				comment.Write(l[1])
+				feeder.CommentBuffer.Write(l[1])
 			}
 		} else {
 			// if the line doesn't start with '>', then it's a part of the
 			// nucleotide sequence, so write it to the buffer
-			bufferedSequence.Write(line)
+			feeder.SequenceBuffer.Write(line)
 		}
 	}
+
+	// don't forget to push last sequence
+	readError = feeder.sendFasta()
 
 	// if an error occured during the parsing of the fasta file,
 	// return the error to trigger cancel()
@@ -484,41 +533,6 @@ Loop:
 	if readError != nil {
 		return readError
 	}
-
-	// don't forget tu push last sequence
-	fastaSequence := FastaSequence{
-		ID:       make([]byte, seqID.Len()),
-		Sequence: make([]uint8, bufferedSequence.Len()),
-	}
-	copy(fastaSequence.ID, seqID.Bytes())
-	seqID.Reset()
-
-	if comment.Len() != 0 {
-		fastaSequence.Comment = make([]byte, comment.Len())
-		copy(fastaSequence.Comment, comment.Bytes())
-		comment.Reset()
-	}
-	for i, b := range bufferedSequence.Bytes() {
-		switch b {
-		case 'A':
-			fastaSequence.Sequence[i] = aCode
-		case 'C':
-			fastaSequence.Sequence[i] = cCode
-		case 'G':
-			fastaSequence.Sequence[i] = gCode
-		case 'T':
-			fastaSequence.Sequence[i] = tCode
-		case 'N':
-			fastaSequence.Sequence[i] = nCode
-		default:
-			readError = fmt.Errorf("invalid char in sequence %v: %v", string(seqID.Bytes()), string(b))
-			break
-		}
-	}
-	if readError != nil {
-		return readError
-	}
-	fnaSequences <- fastaSequence
 
 	// close fasta sequence channel
 	close(fnaSequences)
@@ -548,18 +562,18 @@ type Required struct {
 
 // Optional struct to store required command line args
 type Optional struct {
-	Frame       string `short:"f" long:"frame" value-name:"<code>" description:"frame"`
-	Table       int    `short:"t" long:"table" value-name:"<code>" description:"ncbi code to use" default:"0"`
-	Clean       bool   `short:"c" long:"clean" description:"replace stop codon '*' by 'X'"`
-	Alternative bool   `short:"a" long:"alternative" description:"define frame '-1' as using the set of codons starting with the last codon of the sequence"`
-	Trim        bool   `short:"T" long:"trim" description:"removes all 'X' and '*' characters from the right end of the translation. The trimming process starts at the end and continues until the next character is not a 'X' or a '*'"`
-	NumWorker   int    `short:"n" long:"numcpu" value-name:"<n>" description:"number of threads to use, default is number of CPU"`
+	Frame       string `short:"f" long:"frame" value-name:"<code>" description:"Frame to translate. Possible values:\n  [1, 2, 3, F, -1, -2, -3, R, 6]\n F: forward three frames\n R: reverse three frames\n 6: all 6 frames\n" default:"1"`
+	Table       int    `short:"t" long:"table" value-name:"<code>" description:"NCBI code to use, see https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi?chapter=tgencodes#SG1 for details. Available codes: \n 0: Standard code\n 2: The Vertebrate Mitochondrial Code\n 3: The Yeast Mitochondrial Code\n 4: The Mold, Protozoan, and Coelenterate Mitochondrial Code and the Mycoplasma/Spiroplasma Code\n 5: The Invertebrate Mitochondrial Code\n 6: The Ciliate, Dasycladacean and Hexamita Nuclear Code\n 9: The Echinoderm and Flatworm Mitochondrial Code\n 10: The Euplotid Nuclear Code\n 11: The Bacterial, Archaeal and Plant Plastid Code\n 12: The Alternative Yeast Nuclear Code\n 13: The Ascidian Mitochondrial Code\n 14: The Alternative Flatworm Mitochondrial Code\n16: Chlorophycean Mitochondrial Code\n 21: Trematode Mitochondrial Code\n22: Scenedesmus obliquus Mitochondrial Code\n 23: Thraustochytrium Mitochondrial Code\n 24: Pterobranchia Mitochondrial Code\n 25: Candidate Division SR1 and Gracilibacteria Code\n 26: Pachysolen tannophilus Nuclear Code\n 29: Mesodinium Nuclear\n 30: Peritrich Nuclear\n" default:"0"`
+	Clean       bool   `short:"c" long:"clean" description:"Replace stop codon '*' by 'X'"`
+	Alternative bool   `short:"a" long:"alternative" description:"Define frame '-1' as using the set of codons starting with the last codon of the sequence"`
+	Trim        bool   `short:"T" long:"trim" description:"Removes all 'X' and '*' characters from the right end of the translation. The trimming process starts at the end and continues until the next character is not a 'X' or a '*'"`
+	NumWorker   int    `short:"n" long:"numcpu" value-name:"<n>" description:"Number of threads to use, default is number of CPU"`
 }
 
 // General struct to store required command line args
 type General struct {
-	Help    bool `short:"h" long:"help" description:"show this help message"`
-	Version bool `short:"v" long:"version" description:"print the tool version and exit"`
+	Help    bool `short:"h" long:"help" description:"Show this help message"`
+	Version bool `short:"v" long:"version" description:"Print the tool version and exit"`
 }
 
 func main() {
@@ -581,62 +595,37 @@ func main() {
 		os.Exit(0)
 	}
 	if options.Sequence == "" {
-		printErrorAndExit(fmt.Errorf("missing required parameter -s | -sequence. try %s --help for details", toolName))
+		printErrorAndExit(fmt.Errorf("missing required parameter -s | -sequence, try %s --help for details", toolName))
 	}
 	if options.Outseq == "" {
-		printErrorAndExit(fmt.Errorf("missing required parameter -o | -outseq. try %s --help for details", toolName))
+		printErrorAndExit(fmt.Errorf("missing required parameter -o | -outseq, try %s --help for details", toolName))
 	}
-	if options.Table < 0 || options.Table > 32 {
-		printErrorAndExit(fmt.Errorf("invalid table code: %v, must be between 0 and 31", options.Table))
-	}
-	mapCode, err := createMapCode(options.Table, options.Clean)
-	if err != nil {
-		printErrorAndExit(err)
+	if options.Table != 0 {
+		_, ok := nc.TableDiff[options.Table]
+		if !ok {
+			printErrorAndExit(fmt.Errorf("invalid table code: %v, try %s --help for details", options.Table, toolName))
+		}
 	}
 	if options.NumWorker == 0 {
 		options.NumWorker = runtime.NumCPU()
 	}
-	// mask for required frames
-	frames := make([]int, 6)
-	reverse := false
+	in, err := os.Open(options.Sequence)
+	if err != nil {
+		printErrorAndExit(fmt.Errorf("Could not read from input file %v: %v", options.Sequence, err))
+	}
+	defer in.Close()
+	out, err := os.Create(options.Outseq)
+	if err != nil {
+		printErrorAndExit(fmt.Errorf("Could not write to output file file %v: %v", options.Outseq, err))
+	}
+	defer out.Close()
 
-	if options.Frame == "" {
-		options.Frame = "1"
+	ioHandler := ioHandler{
+		in:  in,
+		out: out,
 	}
-	switch options.Frame {
-	case "1":
-		frames[0] = 1
-	case "2":
-		frames[1] = 1
-	case "3":
-		frames[2] = 1
-	case "F":
-		for i := 0; i < 3; i++ {
-			frames[i] = 1
-		}
-	case "-1":
-		frames[3] = 1
-		reverse = true
-	case "-2":
-		frames[4] = 1
-		reverse = true
-	case "-3":
-		frames[5] = 1
-		reverse = true
-	case "R":
-		for i := 3; i < 6; i++ {
-			frames[i] = 1
-		}
-		reverse = true
-	case "6":
-		for i := range frames {
-			frames[i] = 1
-		}
-		reverse = true
-	default:
-		printErrorAndExit(fmt.Errorf("wrong value for -f | --frame parameter: %s", options.Frame))
-	}
-	err = readSequenceAndTranslate(options, mapCode, frames, reverse)
+
+	err = ioHandler.readSequenceAndTranslate(options)
 	if err != nil {
 		printErrorAndExit(err)
 	}
