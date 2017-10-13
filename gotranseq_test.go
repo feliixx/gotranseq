@@ -2,99 +2,63 @@ package main
 
 import (
 	"bytes"
-	"os"
+	"encoding/json"
+	"fmt"
+	"github.com/jessevdk/go-flags"
+	"io/ioutil"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-var (
-	tbytes       = [11]byte{'A', 'C', 'T', 'I', 'G', 'T', 'A', 'T', 'A', 'C', 'K'}
-	resultBuffer = bytes.NewBuffer(make([]byte, 0))
-	iohandler    = ioHandler{out: resultBuffer}
-)
+type testParameters struct {
+	Options  string `json:"options"`
+	Expected string `json:"expected"`
+}
 
-func TestMain(m *testing.M) {
-	i, err := os.Open("test.fna")
+func getOptionsAndName(opts string) (string, Options, error) {
+	list := strings.Split(opts, " ")
+	for i := range list {
+		list[i] = strings.Join([]string{string("-"), list[i]}, "")
+	}
+	var options Options
+	_, err := flags.ParseArgs(&options, list)
 	if err != nil {
-		os.Exit(1)
+		return "", options, err
 	}
-	defer i.Close()
-	iohandler.in = i
-	os.Exit(m.Run())
+
+	return strings.Replace(strings.Join(list, "_"), "--", "", -1), options, nil
 }
 
-func TestStandard6frames(t *testing.T) {
-	expected := `>Contig538_YY1-1_E08_(3)_1
-NFADGFRVEGAGGLVKQHRLGFHRQGTRNRHPLLLAAGEHRRX
->Contig538_YY1-1_E08_(3)_2
-TSPTVSGSRALVGSSNNIAWGFIARARAIATRCCWPPESIDG
->Contig538_YY1-1_E08_(3)_3
-LRRRFPGRGRWWARQTTSPGVSSPGHAQSPPAAAGRRRASTG
->Contig538_YY1-1_E08_(3)_4
-PSMLSGGQQQRVAIARALAMKPQAMLFDEPTSALDPETVGEV
->Contig538_YY1-1_E08_(3)_5
-PVDALRRPAAAGGDCACPGDETPGDVV*RAHQRPRPGNRRRSX
->Contig538_YY1-1_E08_(3)_6
-RRCSPAASSSGWRLRVPWR*NPRRCCLTSPPAPSTRKPSAKX
-`
-
-	options := Options{
-		Optional: Optional{
-			Frame:       "6",
-			Table:       0,
-			Clean:       false,
-			Alternative: false,
-			Trim:        false,
-			NumWorker:   1,
-		},
-	}
-
-	err := iohandler.readSequenceAndTranslate(options)
+func TestAllOptions(t *testing.T) {
+	// read the config file to run test
+	data, err := ioutil.ReadFile("test/data.json")
 	assert.Nil(t, err)
-	assert.Equal(t, expected, string(resultBuffer.Bytes()), "should be equal")
-}
+	var param []testParameters
+	err = json.Unmarshal(data, &param)
+	assert.Nil(t, err)
 
-func BenchmarkMap(b *testing.B) {
-	index := 0
-	fail := 0
-	success := 0
-	for n := 0; n < b.N; n++ {
-		_, ok := letterCode[tbytes[index]]
-		if !ok {
-			fail++
-		} else {
-			success++
-		}
-		index++
-		if index == len(tbytes) {
-			index = 0
-		}
+	resultBuffer := bytes.NewBuffer(make([]byte, 0))
+	iohandler := ioHandler{
+		out: resultBuffer,
 	}
-}
+	// fasta sequences to translate
+	fasta, err := ioutil.ReadFile("test/test.fna")
+	assert.Nil(t, err)
 
-func BenchmarkSwitch(b *testing.B) {
-	index := 0
-	fail := 0
-	success := 0
-	for n := 0; n < b.N; n++ {
-		switch tbytes[index] {
-		case 'A':
-			success++
-		case 'C':
-			success += 2
-		case 'G':
-			success += 3
-		case 'T':
-			success += 4
-		case 'N':
-			success--
-		default:
-			fail++
-		}
-		index++
-		if index == len(tbytes) {
-			index = 0
-		}
+	for _, p := range param {
+
+		fastaReader := bytes.NewReader(fasta)
+		iohandler.in = fastaReader
+
+		name, opts, err := getOptionsAndName(p.Options)
+		opts.NumWorker = 1
+		assert.Nil(t, err)
+		fmt.Printf("running test %s\n", name)
+		err = iohandler.readSequenceAndTranslate(opts)
+		assert.Nil(t, err)
+		assert.Equal(t, p.Expected, string(resultBuffer.Bytes()), name)
+		resultBuffer.Reset()
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/jessevdk/go-flags"
@@ -33,7 +34,9 @@ const (
 	aCode = uint8(1)
 	cCode = uint8(2)
 	tCode = uint8(3)
+	uCode = uint8(3)
 	gCode = uint8(4)
+
 	// general constant
 	version  = "0.1"
 	toolName = "gotranseq"
@@ -56,6 +59,7 @@ var (
 		'T': tCode,
 		'G': gCode,
 		'N': nCode,
+		'U': uCode,
 	}
 	spaceDelim = []byte{space}
 )
@@ -114,7 +118,7 @@ func (f *fastaChannelFeeder) sendFasta() error {
 			fastaSequence.Sequence[i] = cCode
 		case 'G':
 			fastaSequence.Sequence[i] = gCode
-		case 'T':
+		case 'T', 'U':
 			fastaSequence.Sequence[i] = tCode
 		case 'N':
 			fastaSequence.Sequence[i] = nCode
@@ -142,12 +146,19 @@ func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 	codonCode := [4]uint8{uint8(0), uint8(0), uint8(0), uint8(0)}
 
 	// load the standard code
-	m := nc.Standard
+	m := map[string]byte{}
+	for k, v := range nc.Standard {
+		m[k] = v
+	}
 	// if we use a different code, load the difference map
 	// and update the values
 	if code != 0 {
 		for k, v := range nc.TableDiff[code] {
-			m[k] = v
+			key := k
+			if strings.Contains(k, "U") {
+				key = strings.Replace(k, "U", "T", -1)
+			}
+			m[key] = v
 		}
 	}
 
@@ -156,10 +167,12 @@ func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 		for i := 0; i < 3; i++ {
 			codonCode[i] = letterCode[k[i]]
 		}
-		// each codon is represented by an uint32:
+		// each codon is represented by an unique uint32:
 		// each possible nucleotide is represented by an uint8 (255 possibility)
 		// the three first bytes are the the code for each nucleotide
 		// last byte is uint8(0)
+		// example:
+		// codon 'ACG' ==> uint8(1) | uint8(2) | uint8(4) | uint8(0)
 		uint32Code := uint32(codonCode[0]) | uint32(codonCode[1])<<8 | uint32(codonCode[2])<<16
 		resultMap[uint32Code] = v
 		// generate 2 letter code
@@ -206,6 +219,7 @@ func (i *ioHandler) readSequenceAndTranslate(options Options) error {
 	if err != nil {
 		return err
 	}
+
 	// mask for required frames
 	framesToGenerate := make([]int, 6)
 	reverse := false
@@ -296,22 +310,15 @@ func (i *ioHandler) readSequenceAndTranslate(options Options) error {
 
 			Translate:
 				// forward mode
-				for i, frame := range idx {
+				for j, frame := range idx {
 					// only generate requested frames
-					if framesToGenerate[frame] == 0 {
+					if framesToGenerate[j+nbRunLoop] == 0 {
 						continue
 					}
 					// sequence id should look like
 					// >sequenceID_<frame> comments
 					translated.Write(sequence.ID)
-
-					if nbRunLoop >= 1 {
-						// Translate has been run one already, so we are
-						// in reverse mode
-						translated.Write(suffix[i+4])
-					} else {
-						translated.Write(suffix[frame+1])
-					}
+					translated.Write(suffix[j+nbRunLoop+1])
 
 					if sequence.Comment != nil {
 						translated.WriteByte(space)
@@ -352,6 +359,7 @@ func (i *ioHandler) readSequenceAndTranslate(options Options) error {
 					if (size-frame)%3 == 2 {
 						if currentLength == maxLineSize {
 							translated.WriteByte(endLine)
+							currentLength = 0
 							bytesToTrim++
 						}
 						codonCode = uint32(sequence.Sequence[size-2]) | uint32(sequence.Sequence[size-1])<<8
@@ -367,28 +375,34 @@ func (i *ioHandler) readSequenceAndTranslate(options Options) error {
 								bytesToTrim = 0
 							}
 						}
+						currentLength++
 						// the last codon is only 1 nucleotid long, no way to guess
 						// the corresponding AA
 					} else if (size-frame)%3 == 1 {
 						if currentLength == maxLineSize {
 							translated.WriteByte(endLine)
+							currentLength = 0
 							bytesToTrim++
 						}
 						translated.WriteByte(unknown)
+						currentLength++
 						bytesToTrim++
 					}
 					if options.Trim && bytesToTrim > 0 {
 						// remove the last bytesToTrim bytes of the buffer
 						// as they are 'X', '*' or '\n'
 						translated.Truncate(translated.Len() - bytesToTrim)
+						currentLength -= bytesToTrim
 					}
 					bytesToTrim = 0
-					translated.WriteByte(endLine)
+					if currentLength != 0 {
+						translated.WriteByte(endLine)
+					}
 				}
-				nbRunLoop++
+				nbRunLoop += 3
 
 				// if in reverse mode, reverse-complement the sequence
-				if reverse && nbRunLoop < 2 {
+				if reverse && nbRunLoop < 6 {
 					// get the complementary sequence.
 					// Basically, switch
 					//   A <-> T
@@ -399,6 +413,7 @@ func (i *ioHandler) readSequenceAndTranslate(options Options) error {
 						case aCode:
 							sequence.Sequence[i] = tCode
 						case tCode:
+							// handle both tCode and uCode
 							sequence.Sequence[i] = aCode
 						case cCode:
 							sequence.Sequence[i] = gCode
@@ -557,7 +572,7 @@ type Options struct {
 // Required struct to store required command line args
 type Required struct {
 	Sequence string `short:"s" long:"sequence" value-name:"<filename>" description:"Nucleotide sequence(s) filename"`
-	Outseq   string `short:"o" long:"outseq" value-name:"<filename>" description:"Protein sequence fileName"`
+	Outseq   string `short:"o" long:"outseq" value-name:"<filename>" description:"Protein sequence filename"`
 }
 
 // Optional struct to store required command line args

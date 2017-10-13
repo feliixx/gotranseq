@@ -47,7 +47,7 @@ Usage:
 
 required:
   -s, --sequence=<filename>    Nucleotide sequence(s) filename
-  -o, --outseq=<filename>      Protein sequence fileName
+  -o, --outseq=<filename>      Protein sequence filename
 
 optional:
   -f, --frame=<code>           Frame to translate. Possible values:
