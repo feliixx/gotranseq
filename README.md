@@ -21,8 +21,8 @@ time transeq -sequence file.fna -outseq out.faa -frame 6
 41,82s user 0,76s system 85% cpu 49,696 total
 
 #gotranseq
-time ./gotranseq --sequence file.fna --outseq out.faa --frame 6
-18,30s user 1,03s system 123% cpu 15,628 total
+time ./gotranseq --sequence file.fna --outseq out.faa --frame 6 -n 2
+7,75s user 0,98s system 159% cpu 5,472 total
 ```
 
 ## Installation

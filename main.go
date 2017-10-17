@@ -26,7 +26,7 @@ const (
 	stopByte      = '*'
 	cleanStopByte = 'X'
 	// size of the buffer for writing to file
-	maxBufferSize = 1000 * 1000 * 10
+	maxBufferSize = 1000 * 1000 * 30
 	// max line size for sequence
 	maxLineSize = 60
 	// uint8 code for supported nucleotides
@@ -37,6 +37,10 @@ const (
 	uCode = uint8(3)
 	gCode = uint8(4)
 
+	// Length of the array to store code/bytes
+	// actualy equal to
+	// (uint32(uint8(4)) | uint32(uint8(4))<<8 | uint32(uint8(4))<<16 | uint32(uint8(0))<<24) + 1
+	arrayCodeSize = 263173
 	// general constant
 	version  = "0.1"
 	toolName = "gotranseq"
@@ -126,10 +130,11 @@ func (f *fastaChannelFeeder) sendFasta() error {
 			return fmt.Errorf("invalid char in sequence %v: %v", string(fastaSequence.ID), string(b))
 		}
 	}
+	f.SequenceBuffer.Reset()
+
 	// push the sequence to a buffered channel
 	f.FastaChan <- fastaSequence
 
-	f.SequenceBuffer.Reset()
 	return nil
 }
 
@@ -218,6 +223,14 @@ func (i *ioHandler) readSequenceAndTranslate(options Options) error {
 	mapCode, err := createMapCode(options.Table, options.Clean)
 	if err != nil {
 		return err
+	}
+
+	// we use an array because it's way faster than accessing a map
+	// see https://stackoverflow.com/questions/46789259/map-vs-switch-performance-in-go/46789287#46789443
+	// for details
+	arrayCode := make([]byte, arrayCodeSize)
+	for k, v := range mapCode {
+		arrayCode[k] = v
 	}
 
 	// mask for required frames
@@ -338,10 +351,8 @@ func (i *ioHandler) readSequenceAndTranslate(options Options) error {
 						// create an uint32 from the codon, to retrieve the corresponding
 						// AA from the map
 						codonCode = uint32(sequence.Sequence[i-2]) | uint32(sequence.Sequence[i-1])<<8 | uint32(sequence.Sequence[i])<<16
-						b, ok := mapCode[codonCode]
-						if !ok {
-							// this may occur if the codon contains one or more
-							// unknown nucleotide ('N')
+						b := arrayCode[codonCode]
+						if b == byte(0) {
 							translated.WriteByte(unknown)
 							bytesToTrim++
 						} else {
@@ -363,8 +374,8 @@ func (i *ioHandler) readSequenceAndTranslate(options Options) error {
 							bytesToTrim++
 						}
 						codonCode = uint32(sequence.Sequence[size-2]) | uint32(sequence.Sequence[size-1])<<8
-						b, ok := mapCode[codonCode]
-						if !ok {
+						b := arrayCode[codonCode]
+						if b == byte(0) {
 							translated.WriteByte(unknown)
 							bytesToTrim++
 						} else {
