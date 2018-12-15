@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"sync"
@@ -169,7 +170,6 @@ func computeFrames(options Options) (frames []int, reverse bool, err error) {
 const (
 	endLine = '\n'
 	unknown = 'X'
-	space   = ' '
 
 	// size of the buffer for writing to file
 	maxBufferSize = 1024 * 1024 * 30
@@ -178,7 +178,8 @@ const (
 	// Length of the array to store code/bytes
 	// uses gCode because it's the biggest uint8 of all codes
 	arrayCodeSize = (uint32(gCode) | uint32(gCode)<<8 | uint32(gCode)<<16) + 1
-	suffixes      = "123456"
+	// suffixes ta add to sequence id for each frame
+	suffixes = "123456"
 )
 
 // Translate read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
@@ -199,7 +200,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 		return err
 	}
 
-	fnaSequences := make(chan FastaSequence, 10)
+	fnaSequences := make(chan encodedSequence, 10)
 	errs := make(chan error, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -214,8 +215,6 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 			defer wg.Done()
 
-			// frame matrix in reverse mode because it depends on sequence
-			// length, cf convention
 			startPosition := make([]int, 3)
 			translated := bytes.NewBuffer(nil)
 
@@ -232,7 +231,8 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 				startPosition[1] = 1
 				startPosition[2] = 2
 
-				seqSize := len(sequence.Sequence)
+				idSize := int(binary.LittleEndian.Uint32(sequence[0:4]))
+				nuclSeqLength := len(sequence) - idSize
 
 			Translate:
 				for _, startPos := range startPosition {
@@ -244,13 +244,16 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 					// sequence id should look like
 					// >sequenceID_<frame> comment
-					translated.Write(sequence.ID)
-					translated.WriteByte('_')
-					translated.WriteByte(suffixes[frameIndex])
-
-					if sequence.Comment != nil {
-						translated.WriteByte(space)
-						translated.Write(sequence.Comment)
+					idEnd := bytes.IndexByte(sequence[4:idSize], ' ')
+					if idEnd != -1 {
+						translated.Write(sequence[4 : 4+idEnd])
+						translated.WriteByte('_')
+						translated.WriteByte(suffixes[frameIndex])
+						translated.Write(sequence[4+idEnd : idSize])
+					} else {
+						translated.Write(sequence[4:idSize])
+						translated.WriteByte('_')
+						translated.WriteByte(suffixes[frameIndex])
 					}
 					translated.WriteByte(endLine)
 
@@ -261,7 +264,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 					// read the sequence 3 letters at a time, starting at a specific position
 					// corresponding to the frame
-					for pos := startPos + 2; pos < seqSize; pos += 3 {
+					for pos := startPos + 2 + idSize; pos < len(sequence); pos += 3 {
 
 						if currentLength == maxLineSize {
 							currentLength = 0
@@ -270,7 +273,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						}
 						// create an uint32 from the codon, to retrieve the corresponding
 						// AA from the map
-						codonCode := uint32(sequence.Sequence[pos-2]) | uint32(sequence.Sequence[pos-1])<<8 | uint32(sequence.Sequence[pos])<<16
+						codonCode := uint32(sequence[pos-2]) | uint32(sequence[pos-1])<<8 | uint32(sequence[pos])<<16
 
 						b := arrayCode[codonCode]
 						if b == byte(0) {
@@ -289,14 +292,14 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 					// the last codon is only 2 nucleotid long, try to guess
 					// the corresponding AA
-					if (seqSize-startPos)%3 == 2 {
+					if (nuclSeqLength-startPos)%3 == 2 {
 
 						if currentLength == maxLineSize {
 							translated.WriteByte(endLine)
 							currentLength = 0
 							bytesToTrim++
 						}
-						codonCode := uint32(sequence.Sequence[seqSize-2]) | uint32(sequence.Sequence[seqSize-1])<<8
+						codonCode := uint32(sequence[len(sequence)-2]) | uint32(sequence[len(sequence)-1])<<8
 
 						b := arrayCode[codonCode]
 						if b == byte(0) {
@@ -315,7 +318,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 					// the last codon is only 1 nucleotid long, no way to guess
 					// the corresponding AA
-					if (seqSize-startPos)%3 == 1 {
+					if (nuclSeqLength-startPos)%3 == 1 {
 						if currentLength == maxLineSize {
 							currentLength = 0
 							translated.WriteByte(endLine)
@@ -346,24 +349,25 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 					//   A <-> T
 					//   C <-> G
 					// N is not modified
-					for i, n := range sequence.Sequence {
+					for i, n := range sequence[idSize:] {
+
 						switch n {
 						case aCode:
-							sequence.Sequence[i] = tCode
+							sequence[i+idSize] = tCode
 						case tCode:
 							// handle both tCode and uCode
-							sequence.Sequence[i] = aCode
+							sequence[i+idSize] = aCode
 						case cCode:
-							sequence.Sequence[i] = gCode
+							sequence[i+idSize] = gCode
 						case gCode:
-							sequence.Sequence[i] = cCode
+							sequence[i+idSize] = cCode
 						default:
 							//case N -> leave it
 						}
 					}
 					// reverse the sequence
-					for i, j := 0, seqSize-1; i < j; i, j = i+1, j-1 {
-						sequence.Sequence[i], sequence.Sequence[j] = sequence.Sequence[j], sequence.Sequence[i]
+					for i, j := idSize, len(sequence)-1; i < j; i, j = i+1, j-1 {
+						sequence[i], sequence[j] = sequence[j], sequence[i]
 					}
 
 					if !options.Alternative {
@@ -373,7 +377,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						//
 						// use the matrix to keep track of the forward frame as it depends on the
 						// length of the sequence
-						switch seqSize % 3 {
+						switch nuclSeqLength % 3 {
 						case 0:
 							startPosition[0] = 0
 							startPosition[1] = 2
@@ -404,6 +408,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 					}
 					translated.Reset()
 				}
+				pool.Put(sequence)
 			}
 
 			if translated.Len() > 0 {
@@ -434,17 +439,25 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 	return nil
 }
 
-func readSequenceFromFasta(ctx context.Context, inputSequence io.Reader, fnaSequences chan FastaSequence) {
+func readSequenceFromFasta(ctx context.Context, inputSequence io.Reader, fnaSequences chan encodedSequence) {
 
 	feeder := &fastaChannelFeeder{
-		IDBuffer:       bytes.NewBuffer(make([]byte, 0)),
-		CommentBuffer:  bytes.NewBuffer(make([]byte, 0)),
-		SequenceBuffer: bytes.NewBuffer(make([]byte, 0)),
-		FastaChan:      fnaSequences,
+		idBuffer:       bytes.NewBuffer(make([]byte, 0)),
+		commentBuffer:  bytes.NewBuffer(make([]byte, 0)),
+		sequenceBuffer: bytes.NewBuffer(make([]byte, 0)),
+		fastaChan:      fnaSequences,
 	}
 
 	scanner := bufio.NewScanner(inputSequence)
 
+	// fasta format is:
+	//
+	// >sequenceID some comments on sequence
+	// ACAGGCAGAGACACGACAGACGACGACACAGGAGCAGACAGCAGCAGACGACCACATATT
+	// TTTGCGGTCACATGACGACTTCGGCAGCGA
+	//
+	// see https://blast.ncbi.nlm.nih.gov/Blast.cgi?CMD=Web&PAGE_TYPE=BlastDocs&DOC_TYPE=BlastHelp
+	// section 1 for details
 Loop:
 	for scanner.Scan() {
 
@@ -454,7 +467,7 @@ Loop:
 		}
 		if line[0] == '>' {
 
-			if feeder.IDBuffer.Len() > 0 {
+			if feeder.idBuffer.Len() > 0 {
 				select {
 				case <-ctx.Done():
 					break Loop
@@ -466,16 +479,17 @@ Loop:
 
 			// parse the ID of the sequence. ID is formatted like this:
 			// >sequenceID comments
-			seqInfo := bytes.SplitN(line, []byte{space}, 2)
-			feeder.IDBuffer.Write(seqInfo[0])
+			seqID := bytes.SplitN(line, []byte{' '}, 2)
+			feeder.idBuffer.Write(seqID[0])
 
-			if len(seqInfo) > 1 {
-				feeder.CommentBuffer.Write(seqInfo[1])
+			if len(seqID) > 1 {
+				feeder.commentBuffer.WriteByte(' ')
+				feeder.commentBuffer.Write(seqID[1])
 			}
 		} else {
 			// if the line doesn't start with '>', then it's a part of the
 			// nucleotide sequence, so write it to the buffer
-			feeder.SequenceBuffer.Write(line)
+			feeder.sequenceBuffer.Write(line)
 		}
 	}
 
@@ -489,66 +503,74 @@ Loop:
 	close(fnaSequences)
 }
 
-// FastaSequence stores a nucleic sequence and its meta-info
+// a type to hold an encoded fasta sequence
 //
-// fasta format is:
-//
-// >sequenceID some comments on sequence
-// ACAGGCAGAGACACGACAGACGACGACACAGGAGCAGACAGCAGCAGACGACCACATATT
-// TTTGCGGTCACATGACGACTTCGGCAGCGA
-//
-// see https://blast.ncbi.nlm.nih.gov/Blast.cgi?CMD=Web&PAGE_TYPE=BlastDocs&DOC_TYPE=BlastHelp
-// section 1 for details
-type FastaSequence struct {
-	ID       []byte
-	Comment  []byte
-	Sequence []uint8
+//	s[0:4] stores the size of the sequence id + the size of the comment as an uint32 (little endian)
+//  s[4:idSize] stores the sequence id, and the comment id there is one
+//  s[idSize:] stores the nucl sequence
+type encodedSequence []byte
+
+var pool = sync.Pool{
+	New: func() interface{} {
+		return make(encodedSequence, 512)
+	},
 }
 
-type fastaChannelFeeder struct {
-	IDBuffer       *bytes.Buffer
-	CommentBuffer  *bytes.Buffer
-	SequenceBuffer *bytes.Buffer
-	FastaChan      chan FastaSequence
-}
+func getSizedSlice(idSize, requiredSize int) encodedSequence {
+	s := pool.Get().(encodedSequence)
+	binary.LittleEndian.PutUint32(s[0:4], uint32(idSize))
 
-func (f *fastaChannelFeeder) reset() {
-	f.IDBuffer.Reset()
-	f.SequenceBuffer.Reset()
-	f.CommentBuffer.Reset()
+	for len(s) < requiredSize {
+		s = append(s, byte(0))
+	}
+	return s[0:requiredSize]
 }
 
 func (f *fastaChannelFeeder) sendFasta() {
 
-	fastaSequence := FastaSequence{
-		ID:       make([]byte, f.IDBuffer.Len()),
-		Sequence: make([]uint8, f.SequenceBuffer.Len()),
+	idSize := 4 + f.idBuffer.Len() + f.commentBuffer.Len()
+	requiredSize := idSize + f.sequenceBuffer.Len()
+
+	s := getSizedSlice(idSize, requiredSize)
+
+	if f.commentBuffer.Len() > 0 {
+		copy(s[idSize-f.commentBuffer.Len():idSize], f.commentBuffer.Bytes())
 	}
 
-	copy(fastaSequence.ID, f.IDBuffer.Bytes())
+	copy(s[4:4+f.idBuffer.Len()], f.idBuffer.Bytes())
 
-	if f.CommentBuffer.Len() != 0 {
-		fastaSequence.Comment = make([]byte, f.CommentBuffer.Len())
-		copy(fastaSequence.Comment, f.CommentBuffer.Bytes())
-	}
 	// convert the sequence of bytes to an array of uint8 codes,
 	// so a codon (3 nucleotides | 3 bytes ) can be represented
 	// as an uint32
-	for i, b := range f.SequenceBuffer.Bytes() {
+	for i, b := range f.sequenceBuffer.Bytes() {
+
 		switch b {
 		case 'A':
-			fastaSequence.Sequence[i] = aCode
+			s[i+idSize] = aCode
 		case 'C':
-			fastaSequence.Sequence[i] = cCode
+			s[i+idSize] = cCode
 		case 'G':
-			fastaSequence.Sequence[i] = gCode
+			s[i+idSize] = gCode
 		case 'T', 'U':
-			fastaSequence.Sequence[i] = tCode
+			s[i+idSize] = tCode
 		case 'N':
-			fastaSequence.Sequence[i] = nCode
+			s[i+idSize] = nCode
 		default:
-			fmt.Printf("WARNING: invalid char in sequence %s: %s", fastaSequence.ID, string(b))
+			fmt.Printf("WARNING: invalid char in sequence %s: %s, ignoring", s[4:4+idSize], string(b))
 		}
 	}
-	f.FastaChan <- fastaSequence
+	f.fastaChan <- s
+}
+
+type fastaChannelFeeder struct {
+	idBuffer       *bytes.Buffer
+	commentBuffer  *bytes.Buffer
+	sequenceBuffer *bytes.Buffer
+	fastaChan      chan encodedSequence
+}
+
+func (f *fastaChannelFeeder) reset() {
+	f.idBuffer.Reset()
+	f.sequenceBuffer.Reset()
+	f.commentBuffer.Reset()
 }
