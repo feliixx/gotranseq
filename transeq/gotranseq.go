@@ -52,6 +52,14 @@ var letterCode = map[byte]uint8{
 const (
 	stopByte      = '*'
 	cleanStopByte = 'X'
+
+	// uint8 code for supported nucleotides
+	nCode = uint8(0)
+	aCode = uint8(1)
+	cCode = uint8(2)
+	tCode = uint8(3)
+	uCode = uint8(3)
+	gCode = uint8(4)
 )
 
 // create the code map according to the selected table code
@@ -167,18 +175,9 @@ const (
 	maxBufferSize = 1024 * 1024 * 30
 	// max line size for sequence
 	maxLineSize = 60
-	// uint8 code for supported nucleotides
-	nCode = uint8(0)
-	aCode = uint8(1)
-	cCode = uint8(2)
-	tCode = uint8(3)
-	uCode = uint8(3)
-	gCode = uint8(4)
-
 	// Length of the array to store code/bytes
-	// actualy equal to
-	// (uint32(uint8(4)) | uint32(uint8(4))<<8 | uint32(uint8(4))<<16 | uint32(uint8(0))<<24) + 1
-	arrayCodeSize = 263173
+	// uses gCode because it's the biggest uint8 of all codes
+	arrayCodeSize = (uint32(gCode) | uint32(gCode)<<8 | uint32(gCode)<<16) + 1
 	suffixes      = "123456"
 )
 
