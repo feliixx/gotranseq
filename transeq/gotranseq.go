@@ -6,124 +6,49 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 
 	nc "github.com/feliixx/gotranseq/NCBICode"
 )
 
-const (
-	// some constant for parsing fasta
-	fastaID = '>'
-	endLine = '\n'
-	unknown = 'X'
-	space   = ' '
-	// some AA constant
-	stopByte      = '*'
-	cleanStopByte = 'X'
-	// size of the buffer for writing to file
-	maxBufferSize = 1000 * 1000 * 30
-	// max line size for sequence
-	maxLineSize = 60
-	// uint8 code for supported nucleotides
-	nCode = uint8(0)
-	aCode = uint8(1)
-	cCode = uint8(2)
-	tCode = uint8(3)
-	uCode = uint8(3)
-	gCode = uint8(4)
-
-	// Length of the array to store code/bytes
-	// actualy equal to
-	// (uint32(uint8(4)) | uint32(uint8(4))<<8 | uint32(uint8(4))<<16 | uint32(uint8(0))<<24) + 1
-	arrayCodeSize = 263173
-)
-
-var (
-	// suffix to append to sequenceID to keep track of the frame in
-	// the output file
-	suffix = map[int][]byte{
-		1: {'_', '1'},
-		2: {'_', '2'},
-		3: {'_', '3'},
-		4: {'_', '4'},
-		5: {'_', '5'},
-		6: {'_', '6'},
-	}
-	letterCode = map[byte]uint8{
-		'A': aCode,
-		'C': cCode,
-		'T': tCode,
-		'G': gCode,
-		'N': nCode,
-		'U': uCode,
-	}
-	spaceDelim = []byte{space}
-)
-
-// FastaSequence stores a nucleic sequence and its meta-info
-//
-// fasta format is:
-//
-// >sequenceID some comments on sequence
-// ACAGGCAGAGACACGACAGACGACGACACAGGAGCAGACAGCAGCAGACGACCACATATT
-// TTTGCGGTCACATGACGACTTCGGCAGCGA
-//
-// see https://blast.ncbi.nlm.nih.gov/Blast.cgi?CMD=Web&PAGE_TYPE=BlastDocs&DOC_TYPE=BlastHelp
-// section 1 for details
-type FastaSequence struct {
-	ID       []byte
-	Comment  []byte
-	Sequence []uint8
+// Options struct to store command line args
+type Options struct {
+	Required `group:"required"`
+	Optional `group:"optional"`
+	General  `group:"general"`
 }
 
-type fastaChannelFeeder struct {
-	IDBuffer       *bytes.Buffer
-	CommentBuffer  *bytes.Buffer
-	SequenceBuffer *bytes.Buffer
-	FastaChan      chan FastaSequence
+// Required struct to store required command line args
+type Required struct {
+	Sequence string `short:"s" long:"sequence" value-name:"<filename>" description:"Nucleotide sequence(s) filename"`
+	Outseq   string `short:"o" long:"outseq" value-name:"<filename>" description:"Protein sequence filename"`
 }
 
-func (f *fastaChannelFeeder) sendFasta() error {
-	// create a fastaSequence, comments is not required
-	fastaSequence := FastaSequence{
-		ID:       make([]byte, f.IDBuffer.Len()),
-		Sequence: make([]uint8, f.SequenceBuffer.Len()),
-	}
-	// copy content of buffers to the new object
-	copy(fastaSequence.ID, f.IDBuffer.Bytes())
-	f.IDBuffer.Reset()
+// Optional struct to store required command line args
+type Optional struct {
+	Frame       string `short:"f" long:"frame" value-name:"<code>" description:"Frame to translate. Possible values:\n  [1, 2, 3, F, -1, -2, -3, R, 6]\n F: forward three frames\n R: reverse three frames\n 6: all 6 frames\n" default:"1"`
+	Table       int    `short:"t" long:"table" value-name:"<code>" description:"NCBI code to use, see https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi?chapter=tgencodes#SG1 for details. Available codes: \n 0: Standard code\n 2: The Vertebrate Mitochondrial Code\n 3: The Yeast Mitochondrial Code\n 4: The Mold, Protozoan, and Coelenterate Mitochondrial Code and the Mycoplasma/Spiroplasma Code\n 5: The Invertebrate Mitochondrial Code\n 6: The Ciliate, Dasycladacean and Hexamita Nuclear Code\n 9: The Echinoderm and Flatworm Mitochondrial Code\n 10: The Euplotid Nuclear Code\n 11: The Bacterial, Archaeal and Plant Plastid Code\n 12: The Alternative Yeast Nuclear Code\n 13: The Ascidian Mitochondrial Code\n 14: The Alternative Flatworm Mitochondrial Code\n16: Chlorophycean Mitochondrial Code\n 21: Trematode Mitochondrial Code\n22: Scenedesmus obliquus Mitochondrial Code\n 23: Thraustochytrium Mitochondrial Code\n 24: Pterobranchia Mitochondrial Code\n 25: Candidate Division SR1 and Gracilibacteria Code\n 26: Pachysolen tannophilus Nuclear Code\n 29: Mesodinium Nuclear\n 30: Peritrich Nuclear\n" default:"0"`
+	Clean       bool   `short:"c" long:"clean" description:"Replace stop codon '*' by 'X'"`
+	Alternative bool   `short:"a" long:"alternative" description:"Define frame '-1' as using the set of codons starting with the last codon of the sequence"`
+	Trim        bool   `short:"T" long:"trim" description:"Removes all 'X' and '*' characters from the right end of the translation. The trimming process starts at the end and continues until the next character is not a 'X' or a '*'"`
+	NumWorker   int    `short:"n" long:"numcpu" value-name:"<n>" description:"Number of threads to use, default is number of CPU"`
+}
 
-	if f.CommentBuffer.Len() != 0 {
-		fastaSequence.Comment = make([]byte, f.CommentBuffer.Len())
-		copy(fastaSequence.Comment, f.CommentBuffer.Bytes())
-		f.CommentBuffer.Reset()
-	}
-	// convert the sequence of bytes to an array of uint8 codes,
-	// so a codon (3 nucleotides | 3 bytes ) can be represented
-	// as an uint32
-	for i, b := range f.SequenceBuffer.Bytes() {
-		switch b {
-		case 'A':
-			fastaSequence.Sequence[i] = aCode
-		case 'C':
-			fastaSequence.Sequence[i] = cCode
-		case 'G':
-			fastaSequence.Sequence[i] = gCode
-		case 'T', 'U':
-			fastaSequence.Sequence[i] = tCode
-		case 'N':
-			fastaSequence.Sequence[i] = nCode
-		default:
-			return fmt.Errorf("invalid char in sequence %v: %v", string(fastaSequence.ID), string(b))
-		}
-	}
-	f.SequenceBuffer.Reset()
+// General struct to store required command line args
+type General struct {
+	Help    bool `short:"h" long:"help" description:"Show this help message"`
+	Version bool `short:"v" long:"version" description:"Print the tool version and exit"`
+}
 
-	// push the sequence to a buffered channel
-	f.FastaChan <- fastaSequence
-
-	return nil
+var letterCode = map[byte]uint8{
+	'A': aCode,
+	'C': cCode,
+	'T': tCode,
+	'G': gCode,
+	'N': nCode,
+	'U': uCode,
 }
 
 // create the code map according to the selected table code
@@ -206,34 +131,71 @@ func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 	return resultMap, nil
 }
 
-// Options struct to store command line args
-type Options struct {
-	Required `group:"required"`
-	Optional `group:"optional"`
-	General  `group:"general"`
+func computeFrames(options Options) (frames []int, reverse bool, err error) {
+
+	frames = make([]int, 6)
+	reverse = false
+
+	switch options.Frame {
+	case "1":
+		frames[0] = 1
+	case "2":
+		frames[1] = 1
+	case "3":
+		frames[2] = 1
+	case "F":
+		for i := 0; i < 3; i++ {
+			frames[i] = 1
+		}
+	case "-1":
+		frames[3] = 1
+		reverse = true
+	case "-2":
+		frames[4] = 1
+		reverse = true
+	case "-3":
+		frames[5] = 1
+		reverse = true
+	case "R":
+		for i := 3; i < 6; i++ {
+			frames[i] = 1
+		}
+		reverse = true
+	case "6":
+		for i := range frames {
+			frames[i] = 1
+		}
+		reverse = true
+	default:
+		err = fmt.Errorf("wrong value for -f | --frame parameter: %s", options.Frame)
+	}
+	return frames, reverse, err
 }
 
-// Required struct to store required command line args
-type Required struct {
-	Sequence string `short:"s" long:"sequence" value-name:"<filename>" description:"Nucleotide sequence(s) filename"`
-	Outseq   string `short:"o" long:"outseq" value-name:"<filename>" description:"Protein sequence filename"`
-}
+const (
+	endLine       = '\n'
+	unknown       = 'X'
+	space         = ' '
+	stopByte      = '*'
+	cleanStopByte = 'X'
 
-// Optional struct to store required command line args
-type Optional struct {
-	Frame       string `short:"f" long:"frame" value-name:"<code>" description:"Frame to translate. Possible values:\n  [1, 2, 3, F, -1, -2, -3, R, 6]\n F: forward three frames\n R: reverse three frames\n 6: all 6 frames\n" default:"1"`
-	Table       int    `short:"t" long:"table" value-name:"<code>" description:"NCBI code to use, see https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi?chapter=tgencodes#SG1 for details. Available codes: \n 0: Standard code\n 2: The Vertebrate Mitochondrial Code\n 3: The Yeast Mitochondrial Code\n 4: The Mold, Protozoan, and Coelenterate Mitochondrial Code and the Mycoplasma/Spiroplasma Code\n 5: The Invertebrate Mitochondrial Code\n 6: The Ciliate, Dasycladacean and Hexamita Nuclear Code\n 9: The Echinoderm and Flatworm Mitochondrial Code\n 10: The Euplotid Nuclear Code\n 11: The Bacterial, Archaeal and Plant Plastid Code\n 12: The Alternative Yeast Nuclear Code\n 13: The Ascidian Mitochondrial Code\n 14: The Alternative Flatworm Mitochondrial Code\n16: Chlorophycean Mitochondrial Code\n 21: Trematode Mitochondrial Code\n22: Scenedesmus obliquus Mitochondrial Code\n 23: Thraustochytrium Mitochondrial Code\n 24: Pterobranchia Mitochondrial Code\n 25: Candidate Division SR1 and Gracilibacteria Code\n 26: Pachysolen tannophilus Nuclear Code\n 29: Mesodinium Nuclear\n 30: Peritrich Nuclear\n" default:"0"`
-	Clean       bool   `short:"c" long:"clean" description:"Replace stop codon '*' by 'X'"`
-	Alternative bool   `short:"a" long:"alternative" description:"Define frame '-1' as using the set of codons starting with the last codon of the sequence"`
-	Trim        bool   `short:"T" long:"trim" description:"Removes all 'X' and '*' characters from the right end of the translation. The trimming process starts at the end and continues until the next character is not a 'X' or a '*'"`
-	NumWorker   int    `short:"n" long:"numcpu" value-name:"<n>" description:"Number of threads to use, default is number of CPU"`
-}
+	// size of the buffer for writing to file
+	maxBufferSize = 1000 * 1000 * 30
+	// max line size for sequence
+	maxLineSize = 60
+	// uint8 code for supported nucleotides
+	nCode = uint8(0)
+	aCode = uint8(1)
+	cCode = uint8(2)
+	tCode = uint8(3)
+	uCode = uint8(3)
+	gCode = uint8(4)
 
-// General struct to store required command line args
-type General struct {
-	Help    bool `short:"h" long:"help" description:"Show this help message"`
-	Version bool `short:"v" long:"version" description:"Print the tool version and exit"`
-}
+	// Length of the array to store code/bytes
+	// actualy equal to
+	// (uint32(uint8(4)) | uint32(uint8(4))<<8 | uint32(uint8(4))<<16 | uint32(uint8(0))<<24) + 1
+	arrayCodeSize = 263173
+)
 
 // Translate read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
 func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
@@ -248,50 +210,14 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 		arrayCode[k] = v
 	}
 
-	// mask for required frames
-	framesToGenerate := make([]int, 6)
-	reverse := false
-
-	switch options.Frame {
-	case "1":
-		framesToGenerate[0] = 1
-	case "2":
-		framesToGenerate[1] = 1
-	case "3":
-		framesToGenerate[2] = 1
-	case "F":
-		for i := 0; i < 3; i++ {
-			framesToGenerate[i] = 1
-		}
-	case "-1":
-		framesToGenerate[3] = 1
-		reverse = true
-	case "-2":
-		framesToGenerate[4] = 1
-		reverse = true
-	case "-3":
-		framesToGenerate[5] = 1
-		reverse = true
-	case "R":
-		for i := 3; i < 6; i++ {
-			framesToGenerate[i] = 1
-		}
-		reverse = true
-	case "6":
-		for i := range framesToGenerate {
-			framesToGenerate[i] = 1
-		}
-		reverse = true
-	default:
-		return fmt.Errorf("wrong value for -f | --frame parameter: %s", options.Frame)
+	frames, reverse, err := computeFrames(options)
+	if err != nil {
+		return err
 	}
-	// a channel of fasta sequences that can be used from
-	// multiple goroutines to parrallize the job
+
 	fnaSequences := make(chan FastaSequence, 10)
-	// a channel of error to get error from goroutine
 	errs := make(chan error, 1)
-	// use context to smoothly close all goroutines if
-	// an error occurs
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -303,26 +229,24 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 		go func() {
 
 			defer wg.Done()
-			// buffer to reduce calls to out.Write()
+
 			var translated bytes.Buffer
 			// length of the nucleic sequence
-			var size int
+			size := 0
 			// nb of bytes since last '\n' char
-			var currentLength int
-			// code of the current codon
-			var codonCode uint32
-			// frame matrix in reverse mode because it depends on sequence
-			// length, cf convention
-			idx := make([]int, 3)
+			currentLength := 0
 			// if in trim mode, nb of bytes to trim (nb of successive 'X', '*' and '\n'
 			// from right end of the sequence)
-			var bytesToTrim int
+			bytesToTrim := 0
 			// how many times we run Translate loop on the sequence
-			var nbRunLoop int
+			nbRunLoop := 0
+			// frame matrix in reverse mode because it depends on sequence
+			// length, cf convention
+			reverseFrame := make([]int, 3)
+			codonCode := uint32(0)
 
 			for sequence := range fnaSequences {
-				// if an error occured somewhere, return so
-				// wg.Done() is called
+
 				select {
 				case <-ctx.Done():
 					return
@@ -332,21 +256,21 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 				size = len(sequence.Sequence)
 				nbRunLoop = 0
 
-				idx[0] = 0
-				idx[1] = 1
-				idx[2] = 2
+				reverseFrame[0] = 0
+				reverseFrame[1] = 1
+				reverseFrame[2] = 2
 
 			Translate:
-				// forward mode
-				for j, frame := range idx {
-					// only generate requested frames
-					if framesToGenerate[j+nbRunLoop] == 0 {
+				for j, frame := range reverseFrame {
+
+					if frames[j+nbRunLoop] == 0 {
 						continue
 					}
 					// sequence id should look like
 					// >sequenceID_<frame> comments
 					translated.Write(sequence.ID)
-					translated.Write(suffix[j+nbRunLoop+1])
+					translated.WriteByte('_')
+					translated.WriteString(strconv.Itoa(j + nbRunLoop + 1))
 
 					if sequence.Comment != nil {
 						translated.WriteByte(space)
@@ -463,17 +387,17 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						// length of the sequence
 						switch len(sequence.Sequence) % 3 {
 						case 0:
-							idx[0] = 0
-							idx[1] = 2
-							idx[2] = 1
+							reverseFrame[0] = 0
+							reverseFrame[1] = 2
+							reverseFrame[2] = 1
 						case 1:
-							idx[0] = 1
-							idx[1] = 0
-							idx[2] = 2
+							reverseFrame[0] = 1
+							reverseFrame[1] = 0
+							reverseFrame[2] = 2
 						case 2:
-							idx[0] = 2
-							idx[1] = 1
-							idx[2] = 0
+							reverseFrame[0] = 2
+							reverseFrame[1] = 1
+							reverseFrame[2] = 0
 						}
 					}
 					// run the same loop, but with the reverse-complemented sequence
@@ -513,9 +437,18 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 			}
 		}()
 	}
-	scanner := bufio.NewScanner(inputSequence)
 
-	var readError error
+	readSequenceFromFasta(ctx, cancel, inputSequence, errs, fnaSequences)
+
+	wg.Wait()
+
+	if ctx.Err() != nil {
+		return <-errs
+	}
+	return nil
+}
+
+func readSequenceFromFasta(ctx context.Context, cancel context.CancelFunc, inputSequence io.Reader, errs chan error, fnaSequences chan FastaSequence) {
 
 	feeder := &fastaChannelFeeder{
 		IDBuffer:       bytes.NewBuffer(make([]byte, 0)),
@@ -524,22 +457,22 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 		FastaChan:      fnaSequences,
 	}
 
-	// tag the loop so we can break it from anywhere
+	var readError error
+	scanner := bufio.NewScanner(inputSequence)
+
 Loop:
-	// read the file line by line
 	for scanner.Scan() {
+
 		line := scanner.Bytes()
-		// Fasta files with blanks lines are incorrect
+
 		if len(line) == 0 {
 			readError = fmt.Errorf("invalid fasta file: empty lines are forbidden")
 			break Loop
 		}
-		// if the line starts with '>'; it's the ID of the sequence
-		if line[0] == fastaID {
-			// for the first sequence, the buffer for the ID is empty
+		if line[0] == '>' {
+
 			if feeder.IDBuffer.Len() > 0 {
-				// if an error occurred in one of the 'inserting' goroutines,
-				// break the loop
+
 				select {
 				case <-ctx.Done():
 					break Loop
@@ -547,14 +480,17 @@ Loop:
 				}
 				readError = feeder.sendFasta()
 				if readError != nil {
-					break Loop
+					errs <- readError
+					cancel()
 				}
 			}
+			feeder.reset()
+
 			// parse the ID of the sequence. ID is formatted like this:
 			// >sequenceID comments
-			l := bytes.SplitN(line, spaceDelim, 2)
+			l := bytes.SplitN(line, []byte{space}, 2)
 			feeder.IDBuffer.Write(l[0])
-			// if there is two arrays returned, the sequence has comment
+
 			if len(l) > 1 {
 				feeder.CommentBuffer.Write(l[1])
 			}
@@ -565,25 +501,87 @@ Loop:
 		}
 	}
 
-	// don't forget to push last sequence
-	readError = feeder.sendFasta()
+	select {
+	case <-ctx.Done():
+	default:
+		// don't forget to push last sequence
+		readError = feeder.sendFasta()
 
-	// if an error occured during the parsing of the fasta file,
-	// return the error to trigger cancel()
-	// so we can smoothly terminate all goroutines
-	if readError != nil {
-		return readError
+		// if an error occured during the parsing of the fasta file,
+		// return the error to trigger cancel()
+		// so we can smoothly terminate all goroutines
+		if readError != nil {
+			errs <- readError
+			cancel()
+		}
 	}
 
-	// close fasta sequence channel
 	close(fnaSequences)
-	// wait for goroutines to finish
-	wg.Wait()
-	// if cancel() has been called from one of the goroutines,
-	// then there must be an error in the error channel, so
-	// return it
-	if ctx.Err() != nil {
-		return <-errs
+}
+
+// FastaSequence stores a nucleic sequence and its meta-info
+//
+// fasta format is:
+//
+// >sequenceID some comments on sequence
+// ACAGGCAGAGACACGACAGACGACGACACAGGAGCAGACAGCAGCAGACGACCACATATT
+// TTTGCGGTCACATGACGACTTCGGCAGCGA
+//
+// see https://blast.ncbi.nlm.nih.gov/Blast.cgi?CMD=Web&PAGE_TYPE=BlastDocs&DOC_TYPE=BlastHelp
+// section 1 for details
+type FastaSequence struct {
+	ID       []byte
+	Comment  []byte
+	Sequence []uint8
+}
+
+type fastaChannelFeeder struct {
+	IDBuffer       *bytes.Buffer
+	CommentBuffer  *bytes.Buffer
+	SequenceBuffer *bytes.Buffer
+	FastaChan      chan FastaSequence
+}
+
+func (f *fastaChannelFeeder) reset() {
+	f.IDBuffer.Reset()
+	f.SequenceBuffer.Reset()
+	f.CommentBuffer.Reset()
+}
+
+func (f *fastaChannelFeeder) sendFasta() error {
+
+	fastaSequence := FastaSequence{
+		ID:       make([]byte, f.IDBuffer.Len()),
+		Sequence: make([]uint8, f.SequenceBuffer.Len()),
 	}
+
+	copy(fastaSequence.ID, f.IDBuffer.Bytes())
+
+	if f.CommentBuffer.Len() != 0 {
+		fastaSequence.Comment = make([]byte, f.CommentBuffer.Len())
+		copy(fastaSequence.Comment, f.CommentBuffer.Bytes())
+	}
+	// convert the sequence of bytes to an array of uint8 codes,
+	// so a codon (3 nucleotides | 3 bytes ) can be represented
+	// as an uint32
+	for i, b := range f.SequenceBuffer.Bytes() {
+		switch b {
+		case 'A':
+			fastaSequence.Sequence[i] = aCode
+		case 'C':
+			fastaSequence.Sequence[i] = cCode
+		case 'G':
+			fastaSequence.Sequence[i] = gCode
+		case 'T', 'U':
+			fastaSequence.Sequence[i] = tCode
+		case 'N':
+			fastaSequence.Sequence[i] = nCode
+		default:
+			return fmt.Errorf("invalid char in sequence %s: %s", fastaSequence.ID, string(b))
+		}
+	}
+
+	f.FastaChan <- fastaSequence
+
 	return nil
 }
