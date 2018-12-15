@@ -13,11 +13,6 @@ import (
 	"github.com/jessevdk/go-flags"
 )
 
-type testParameters struct {
-	Options  string `json:"options"`
-	Expected string `json:"expected"`
-}
-
 func TestAllOptions(t *testing.T) {
 
 	data, err := ioutil.ReadFile("testdata/data.json")
@@ -25,36 +20,40 @@ func TestAllOptions(t *testing.T) {
 		t.Error(err)
 	}
 
-	var param []testParameters
-	err = json.Unmarshal(data, &param)
+	var tests []struct {
+		Options  string `json:"options"`
+		Expected string `json:"expected"`
+	}
+
+	err = json.Unmarshal(data, &tests)
 	if err != nil {
 		t.Error(err)
 	}
 
-	fasta, err := ioutil.ReadFile("testdata/test.fna")
+	inputBytes, err := ioutil.ReadFile("testdata/test.fna")
 	if err != nil {
 		t.Error(err)
 	}
 
 	out := bytes.NewBuffer(make([]byte, 0, 2*1024))
 
-	for _, p := range param {
+	for _, test := range tests {
 
-		t.Run(p.Options, func(t *testing.T) {
+		t.Run(test.Options, func(t *testing.T) {
 
-			opts, err := getOptionsAndName(p.Options)
+			opts, err := getOptionsAndName(test.Options)
 			opts.NumWorker = 1
 			if err != nil {
 				t.Error(err)
 			}
 
-			in := bytes.NewReader(fasta)
+			in := bytes.NewReader(inputBytes)
 			err = transeq.Translate(in, out, opts)
 			if err != nil {
 				t.Error(err)
 			}
 
-			if want, got := p.Expected, out.String(); want != got {
+			if want, got := test.Expected, out.String(); want != got {
 				compareByline(t, want, got)
 			}
 
@@ -95,5 +94,4 @@ func compareByline(t *testing.T, want, got string) {
 	}
 
 	t.Errorf("found differences in lines\n%v\n", diffs)
-
 }
