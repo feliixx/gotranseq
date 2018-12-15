@@ -168,9 +168,6 @@ func computeFrames(options Options) (frames []int, reverse bool, err error) {
 }
 
 const (
-	endLine = '\n'
-	unknown = 'X'
-
 	// size of the buffer for writing to file
 	maxBufferSize = 1024 * 1024 * 30
 	// max line size for sequence
@@ -181,6 +178,34 @@ const (
 	// suffixes ta add to sequence id for each frame
 	suffixes = "123456"
 )
+
+type writer struct {
+	buf            *bytes.Buffer
+	currentLineLen int
+	bytesToTrim    int
+}
+
+func (w *writer) addByte(b byte) {
+	w.buf.WriteByte(b)
+	w.currentLineLen++
+	if b == stopByte || b == cleanStopByte {
+		w.bytesToTrim++
+	} else {
+		w.bytesToTrim = 0
+	}
+}
+
+func (w *writer) addUnknown() {
+	w.buf.WriteByte('X')
+	w.currentLineLen++
+	w.bytesToTrim++
+}
+
+func (w *writer) newLine() {
+	w.buf.WriteByte('\n')
+	w.currentLineLen = 0
+	w.bytesToTrim++
+}
 
 // Translate read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
 func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
@@ -216,7 +241,12 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 			defer wg.Done()
 
 			startPosition := make([]int, 3)
-			translated := bytes.NewBuffer(nil)
+
+			w := &writer{
+				buf:            bytes.NewBuffer(nil),
+				bytesToTrim:    0,
+				currentLineLen: 0,
+			}
 
 			for sequence := range fnaSequences {
 
@@ -246,98 +276,76 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 					// >sequenceID_<frame> comment
 					idEnd := bytes.IndexByte(sequence[4:idSize], ' ')
 					if idEnd != -1 {
-						translated.Write(sequence[4 : 4+idEnd])
-						translated.WriteByte('_')
-						translated.WriteByte(suffixes[frameIndex])
-						translated.Write(sequence[4+idEnd : idSize])
+						w.buf.Write(sequence[4 : 4+idEnd])
+						w.buf.WriteByte('_')
+						w.buf.WriteByte(suffixes[frameIndex])
+						w.buf.Write(sequence[4+idEnd : idSize])
 					} else {
-						translated.Write(sequence[4:idSize])
-						translated.WriteByte('_')
-						translated.WriteByte(suffixes[frameIndex])
+						w.buf.Write(sequence[4:idSize])
+						w.buf.WriteByte('_')
+						w.buf.WriteByte(suffixes[frameIndex])
 					}
-					translated.WriteByte(endLine)
+					w.newLine()
 
 					// if in trim mode, nb of bytes to trim (nb of successive 'X', '*' and '\n'
 					// from right end of the sequence)
-					bytesToTrim := 0
-					currentLength := 0
+					w.bytesToTrim = 0
+					w.currentLineLen = 0
 
 					// read the sequence 3 letters at a time, starting at a specific position
 					// corresponding to the frame
 					for pos := startPos + 2 + idSize; pos < len(sequence); pos += 3 {
 
-						if currentLength == maxLineSize {
-							currentLength = 0
-							translated.WriteByte(endLine)
-							bytesToTrim++
+						if w.currentLineLen == maxLineSize {
+							w.newLine()
 						}
 						// create an uint32 from the codon, to retrieve the corresponding
 						// AA from the map
 						codonCode := uint32(sequence[pos-2]) | uint32(sequence[pos-1])<<8 | uint32(sequence[pos])<<16
 
 						b := arrayCode[codonCode]
-						if b == byte(0) {
-							translated.WriteByte(unknown)
-							bytesToTrim++
+						if b != byte(0) {
+							w.addByte(b)
 						} else {
-							translated.WriteByte(b)
-							if b == stopByte || b == cleanStopByte {
-								bytesToTrim++
-							} else {
-								bytesToTrim = 0
-							}
+							w.addUnknown()
 						}
-						currentLength++
 					}
 
 					// the last codon is only 2 nucleotid long, try to guess
 					// the corresponding AA
 					if (nuclSeqLength-startPos)%3 == 2 {
 
-						if currentLength == maxLineSize {
-							translated.WriteByte(endLine)
-							currentLength = 0
-							bytesToTrim++
+						if w.currentLineLen == maxLineSize {
+							w.newLine()
 						}
 						codonCode := uint32(sequence[len(sequence)-2]) | uint32(sequence[len(sequence)-1])<<8
 
 						b := arrayCode[codonCode]
-						if b == byte(0) {
-							translated.WriteByte(unknown)
-							bytesToTrim++
+						if b != byte(0) {
+							w.addByte(b)
 						} else {
-							translated.WriteByte(b)
-							if b == stopByte || b == cleanStopByte {
-								bytesToTrim++
-							} else {
-								bytesToTrim = 0
-							}
+							w.addUnknown()
 						}
-						currentLength++
 					}
 
 					// the last codon is only 1 nucleotid long, no way to guess
 					// the corresponding AA
 					if (nuclSeqLength-startPos)%3 == 1 {
-						if currentLength == maxLineSize {
-							currentLength = 0
-							translated.WriteByte(endLine)
-							bytesToTrim++
+						if w.currentLineLen == maxLineSize {
+							w.newLine()
 						}
-						translated.WriteByte(unknown)
-						currentLength++
-						bytesToTrim++
+						w.addUnknown()
 					}
 
-					if options.Trim && bytesToTrim > 0 {
+					if options.Trim && w.bytesToTrim > 0 {
 						// remove the last bytesToTrim bytes of the buffer
 						// as they are 'X', '*' or '\n'
-						translated.Truncate(translated.Len() - bytesToTrim)
-						currentLength -= bytesToTrim
+						w.buf.Truncate(w.buf.Len() - w.bytesToTrim)
+						w.currentLineLen -= w.bytesToTrim
 					}
 
-					if currentLength != 0 {
-						translated.WriteByte(endLine)
+					if w.currentLineLen != 0 {
+						w.newLine()
 					}
 					frameIndex++
 				}
@@ -396,8 +404,8 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 					goto Translate
 				}
 
-				if translated.Len() > maxBufferSize {
-					_, err := out.Write(translated.Bytes())
+				if w.buf.Len() > maxBufferSize {
+					_, err := out.Write(w.buf.Bytes())
 					if err != nil {
 						select {
 						case errs <- fmt.Errorf("fail to write to output file: %v", err):
@@ -406,13 +414,13 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						cancel()
 						return
 					}
-					translated.Reset()
+					w.buf.Reset()
 				}
 				pool.Put(sequence)
 			}
 
-			if translated.Len() > 0 {
-				_, err := out.Write(translated.Bytes())
+			if w.buf.Len() > 0 {
+				_, err := out.Write(w.buf.Bytes())
 				if err != nil {
 					select {
 					case errs <- fmt.Errorf("fail to write to output file: %v", err):
