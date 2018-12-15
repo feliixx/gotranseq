@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -94,4 +95,26 @@ func compareByline(t *testing.T, want, got string) {
 	}
 
 	t.Errorf("found differences in lines\n%v\n", diffs)
+}
+
+func BenchmarkTranslate(b *testing.B) {
+
+	input, err := os.Open("testdata/big.fna")
+	if err != nil {
+		b.Error(err)
+	}
+
+	options := transeq.Options{
+		Optional: transeq.Optional{
+			Frame:     "6",
+			NumWorker: 3,
+		},
+	}
+
+	b.ResetTimer()
+
+	for n := 0; n < b.N; n++ {
+		transeq.Translate(input, ioutil.Discard, options)
+	}
+
 }

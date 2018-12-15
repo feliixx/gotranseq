@@ -1,3 +1,4 @@
 gotranseq
 *.faa
 *.out
+transeq/testdata/big.fna
