@@ -84,11 +84,6 @@ type fastaChannelFeeder struct {
 	FastaChan      chan FastaSequence
 }
 
-type IOHandler struct {
-	In  io.Reader
-	Out io.Writer
-}
-
 func (f *fastaChannelFeeder) sendFasta() error {
 	// create a fastaSequence, comments is not required
 	fastaSequence := FastaSequence{
@@ -240,17 +235,14 @@ type General struct {
 	Version bool `short:"v" long:"version" description:"Print the tool version and exit"`
 }
 
-// read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
-func (i *IOHandler) ReadSequenceAndTranslate(options Options) error {
-	// get the codemap for codon <-> AA translation
+// Translate read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
+func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
+
 	mapCode, err := createMapCode(options.Table, options.Clean)
 	if err != nil {
 		return err
 	}
 
-	// we use an array because it's way faster than accessing a map
-	// see https://stackoverflow.com/questions/46789259/map-vs-switch-performance-in-go/46789287#46789443
-	// for details
 	arrayCode := make([]byte, arrayCodeSize)
 	for k, v := range mapCode {
 		arrayCode[k] = v
@@ -490,7 +482,7 @@ func (i *IOHandler) ReadSequenceAndTranslate(options Options) error {
 				// if the buffer holds more than 10MB of data,
 				// write it to output file and reset the buffer
 				if translated.Len() > maxBufferSize {
-					_, err := i.Out.Write(translated.Bytes())
+					_, err := out.Write(translated.Bytes())
 					if err != nil {
 						// if this failed, push the error to the error channel so we can return
 						// it to the user
@@ -509,7 +501,7 @@ func (i *IOHandler) ReadSequenceAndTranslate(options Options) error {
 			}
 			// some sequences left in the buffer
 			if translated.Len() > 0 {
-				_, err := i.Out.Write(translated.Bytes())
+				_, err := out.Write(translated.Bytes())
 				if err != nil {
 					select {
 					case errs <- fmt.Errorf("fail to write to output file: %v", err):
@@ -521,7 +513,7 @@ func (i *IOHandler) ReadSequenceAndTranslate(options Options) error {
 			}
 		}()
 	}
-	scanner := bufio.NewScanner(i.In)
+	scanner := bufio.NewScanner(inputSequence)
 
 	var readError error
 

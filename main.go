@@ -19,13 +19,41 @@ func printErrorAndExit(err error) {
 	os.Exit(1)
 }
 
+func run(options transeq.Options) error {
+
+	if options.Sequence == "" {
+		return fmt.Errorf("missing required parameter -s | -sequence, try %s --help for details", toolName)
+	}
+	if options.Outseq == "" {
+		return fmt.Errorf("missing required parameter -o | -outseq, try %s --help for details", toolName)
+	}
+
+	if options.NumWorker == 0 {
+		options.NumWorker = runtime.NumCPU()
+	}
+
+	in, err := os.Open(options.Sequence)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(options.Outseq)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	return transeq.Translate(in, out, options)
+}
+
 func main() {
 
 	var options transeq.Options
 	p := flags.NewParser(&options, flags.Default&^flags.HelpFlag)
 	_, err := p.Parse()
 	if err != nil {
-		fmt.Printf("wrong args: %v, try %s --help for more informations\n", err, toolName)
+		fmt.Printf("wrong arguments: %v, try %s --help for more informations\n", err, toolName)
 		os.Exit(1)
 	}
 	if options.Help {
@@ -37,34 +65,9 @@ func main() {
 		fmt.Printf("%s version version %s\n", toolName, version)
 		os.Exit(0)
 	}
-	if options.Sequence == "" {
-		printErrorAndExit(fmt.Errorf("missing required parameter -s | -sequence, try %s --help for details", toolName))
-	}
-	if options.Outseq == "" {
-		printErrorAndExit(fmt.Errorf("missing required parameter -o | -outseq, try %s --help for details", toolName))
-	}
 
-	if options.NumWorker == 0 {
-		options.NumWorker = runtime.NumCPU()
-	}
-	in, err := os.Open(options.Sequence)
+	err = run(options)
 	if err != nil {
-		printErrorAndExit(fmt.Errorf("Could not read from input file %v: %v", options.Sequence, err))
-	}
-	defer in.Close()
-	out, err := os.Create(options.Outseq)
-	if err != nil {
-		printErrorAndExit(fmt.Errorf("Could not write to output file file %v: %v", options.Outseq, err))
-	}
-	defer out.Close()
-
-	ioHandler := transeq.IOHandler{
-		In:  in,
-		Out: out,
-	}
-
-	err = ioHandler.ReadSequenceAndTranslate(options)
-	if err != nil {
-		printErrorAndExit(err)
+		fmt.Printf("fail to translate file:\n%v", err)
 	}
 }
