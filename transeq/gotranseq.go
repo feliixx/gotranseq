@@ -7,10 +7,9 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 	"sync"
 
-	nc "github.com/feliixx/gotranseq/NCBICode"
+	"github.com/feliixx/gotranseq/ncbicode"
 )
 
 // Options struct to store command line args
@@ -58,30 +57,12 @@ func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 	twoLetterMap := map[string][]byte{}
 	codonCode := [4]uint8{uint8(0), uint8(0), uint8(0), uint8(0)}
 
-	// load the standard code
-	m := map[string]byte{}
-	for k, v := range nc.Standard {
-		m[k] = v
-	}
-	// if we use a different code, load the difference map
-	// and update the values
-	if code != 0 {
-
-		diff, ok := nc.TableDiff[code]
-		if !ok {
-			return nil, fmt.Errorf("invalid table code: %v", code)
-		}
-
-		for k, v := range diff {
-			key := k
-			if strings.Contains(k, "U") {
-				key = strings.Replace(k, "U", "T", -1)
-			}
-			m[key] = v
-		}
+	codeMap, err := ncbicode.LoadTableCode(code)
+	if err != nil {
+		return nil, err
 	}
 
-	for k, v := range m {
+	for k, v := range codeMap {
 		// generate 3 letter code
 		for i := 0; i < 3; i++ {
 			codonCode[i] = letterCode[k[i]]
@@ -95,19 +76,19 @@ func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 		uint32Code := uint32(codonCode[0]) | uint32(codonCode[1])<<8 | uint32(codonCode[2])<<16
 		resultMap[uint32Code] = v
 		// generate 2 letter code
-		m, ok := twoLetterMap[k[0:2]]
+		codeMap, ok := twoLetterMap[k[0:2]]
 		// two letter codon is not present
 		if !ok {
 			twoLetterMap[k[0:2]] = []byte{v}
 		} else {
-			m = append(m, v)
-			twoLetterMap[k[0:2]] = m
+			codeMap = append(codeMap, v)
+			twoLetterMap[k[0:2]] = codeMap
 		}
 	}
-	for l, m := range twoLetterMap {
+	for l, codeMap := range twoLetterMap {
 		uniqueAA := true
-		for i := 0; i < len(m); i++ {
-			if m[i] != m[0] {
+		for i := 0; i < len(codeMap); i++ {
+			if codeMap[i] != codeMap[0] {
 				uniqueAA = false
 			}
 		}
@@ -116,7 +97,7 @@ func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 			second := letterCode[l[1]]
 
 			uint32Code := uint32(first) | uint32(second)<<8
-			resultMap[uint32Code] = m[0]
+			resultMap[uint32Code] = codeMap[0]
 		}
 	}
 	// if clean is specified, we want to replace all '*' by 'X' in the output

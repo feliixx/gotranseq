@@ -1,11 +1,16 @@
-// Package NCBICode stores codon <-> AA
+// Package ncbicode stores codon <-> AA
 // translation.
 //
 // Relevant documentation:
 //
 //    https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi?chapter=tgencodes#SG1
 //
-package NCBICode
+package ncbicode
+
+import (
+	"fmt"
+	"strings"
+)
 
 var (
 	// Standard the standard code
@@ -333,3 +338,30 @@ var (
 		30: peritrichDiff,
 	}
 )
+
+// LoadTableCode returns a map of condon <-> AA
+func LoadTableCode(code int) (map[string]byte, error) {
+
+	m := map[string]byte{}
+	for k, v := range Standard {
+		m[k] = v
+	}
+	// if we use a different code, load the difference map
+	// and update the values
+	if code != 0 {
+
+		diff, ok := TableDiff[code]
+		if !ok {
+			return nil, fmt.Errorf("invalid table code: %v", code)
+		}
+
+		for k, v := range diff {
+			key := k
+			if strings.Contains(k, "U") {
+				key = strings.Replace(k, "U", "T", -1)
+			}
+			m[key] = v
+		}
+	}
+	return m, nil
+}
