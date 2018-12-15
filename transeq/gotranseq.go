@@ -59,17 +59,18 @@ func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 
 	resultMap := map[uint32]byte{}
 	twoLetterMap := map[string][]byte{}
-	codonCode := [4]uint8{uint8(0), uint8(0), uint8(0), uint8(0)}
+
+	tmpCode := make([]uint8, 4)
 
 	codeMap, err := ncbicode.LoadTableCode(code)
 	if err != nil {
 		return nil, err
 	}
 
-	for k, v := range codeMap {
+	for codon, aaCode := range codeMap {
 		// generate 3 letter code
 		for i := 0; i < 3; i++ {
-			codonCode[i] = letterCode[k[i]]
+			tmpCode[i] = letterCode[codon[i]]
 		}
 		// each codon is represented by an unique uint32:
 		// each possible nucleotide is represented by an uint8 (255 possibility)
@@ -77,31 +78,31 @@ func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 		// last byte is uint8(0)
 		// example:
 		// codon 'ACG' ==> uint8(1) | uint8(2) | uint8(4) | uint8(0)
-		uint32Code := uint32(codonCode[0]) | uint32(codonCode[1])<<8 | uint32(codonCode[2])<<16
-		resultMap[uint32Code] = v
+		uint32Code := uint32(tmpCode[0]) | uint32(tmpCode[1])<<8 | uint32(tmpCode[2])<<16
+		resultMap[uint32Code] = aaCode
+
 		// generate 2 letter code
-		codeMap, ok := twoLetterMap[k[0:2]]
-		// two letter codon is not present
+		codes, ok := twoLetterMap[codon[0:2]]
 		if !ok {
-			twoLetterMap[k[0:2]] = []byte{v}
+			twoLetterMap[codon[0:2]] = []byte{aaCode}
 		} else {
-			codeMap = append(codeMap, v)
-			twoLetterMap[k[0:2]] = codeMap
+			twoLetterMap[codon[0:2]] = append(codes, aaCode)
 		}
 	}
-	for l, codeMap := range twoLetterMap {
+	for twoLetterCodon, codes := range twoLetterMap {
 		uniqueAA := true
-		for i := 0; i < len(codeMap); i++ {
-			if codeMap[i] != codeMap[0] {
+		for i := 0; i < len(codes); i++ {
+
+			if codes[i] != codes[0] {
 				uniqueAA = false
 			}
 		}
 		if uniqueAA {
-			first := letterCode[l[0]]
-			second := letterCode[l[1]]
+			first := letterCode[twoLetterCodon[0]]
+			second := letterCode[twoLetterCodon[1]]
 
 			uint32Code := uint32(first) | uint32(second)<<8
-			resultMap[uint32Code] = codeMap[0]
+			resultMap[uint32Code] = codes[0]
 		}
 	}
 	// if clean is specified, we want to replace all '*' by 'X' in the output
