@@ -33,7 +33,7 @@ func getOptionsAndName(opts string) (string, Options, error) {
 
 func TestAllOptions(t *testing.T) {
 	// read the config file to run test
-	data, err := ioutil.ReadFile("test/data.json")
+	data, err := ioutil.ReadFile("testdata/data.json")
 	assert.Nil(t, err)
 	var param []testParameters
 	err = json.Unmarshal(data, &param)
@@ -44,7 +44,7 @@ func TestAllOptions(t *testing.T) {
 		out: resultBuffer,
 	}
 	// fasta sequences to translate
-	fasta, err := ioutil.ReadFile("test/test.fna")
+	fasta, err := ioutil.ReadFile("testdata/test.fna")
 	assert.Nil(t, err)
 
 	for _, p := range param {
