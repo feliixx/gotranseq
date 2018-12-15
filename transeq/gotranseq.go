@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strconv"
 	"sync"
 
 	"github.com/feliixx/gotranseq/ncbicode"
@@ -161,7 +160,7 @@ const (
 	cleanStopByte = 'X'
 
 	// size of the buffer for writing to file
-	maxBufferSize = 1000 * 1000 * 30
+	maxBufferSize = 1024 * 1024 * 30
 	// max line size for sequence
 	maxLineSize = 60
 	// uint8 code for supported nucleotides
@@ -176,6 +175,7 @@ const (
 	// actualy equal to
 	// (uint32(uint8(4)) | uint32(uint8(4))<<8 | uint32(uint8(4))<<16 | uint32(uint8(0))<<24) + 1
 	arrayCodeSize = 263173
+	suffixes      = "123456"
 )
 
 // Translate read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
@@ -191,7 +191,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 		arrayCode[k] = v
 	}
 
-	frames, reverse, err := computeFrames(options)
+	framesToGenerate, reverse, err := computeFrames(options)
 	if err != nil {
 		return err
 	}
@@ -211,20 +211,10 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 			defer wg.Done()
 
-			var translated bytes.Buffer
-			// length of the nucleic sequence
-			size := 0
-			// nb of bytes since last '\n' char
-			currentLength := 0
-			// if in trim mode, nb of bytes to trim (nb of successive 'X', '*' and '\n'
-			// from right end of the sequence)
-			bytesToTrim := 0
-			// how many times we run Translate loop on the sequence
-			nbRunLoop := 0
 			// frame matrix in reverse mode because it depends on sequence
 			// length, cf convention
-			reverseFrame := make([]int, 3)
-			codonCode := uint32(0)
+			startPosition := make([]int, 3)
+			translated := bytes.NewBuffer(nil)
 
 			for sequence := range fnaSequences {
 
@@ -234,24 +224,26 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 				default:
 				}
 
-				size = len(sequence.Sequence)
-				nbRunLoop = 0
+				frameIndex := 0
+				startPosition[0] = 0
+				startPosition[1] = 1
+				startPosition[2] = 2
 
-				reverseFrame[0] = 0
-				reverseFrame[1] = 1
-				reverseFrame[2] = 2
+				seqSize := len(sequence.Sequence)
 
 			Translate:
-				for j, frame := range reverseFrame {
+				for _, startPos := range startPosition {
 
-					if frames[j+nbRunLoop] == 0 {
+					if framesToGenerate[frameIndex] == 0 {
+						frameIndex++
 						continue
 					}
+
 					// sequence id should look like
-					// >sequenceID_<frame> comments
+					// >sequenceID_<frame> comment
 					translated.Write(sequence.ID)
 					translated.WriteByte('_')
-					translated.WriteString(strconv.Itoa(j + nbRunLoop + 1))
+					translated.WriteByte(suffixes[frameIndex])
 
 					if sequence.Comment != nil {
 						translated.WriteByte(space)
@@ -259,10 +251,15 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 					}
 					translated.WriteByte(endLine)
 
-					currentLength = 0
+					// if in trim mode, nb of bytes to trim (nb of successive 'X', '*' and '\n'
+					// from right end of the sequence)
+					bytesToTrim := 0
+					currentLength := 0
 
-					for i := frame + 2; i < size; i += 3 {
-						// format sequence: should be 60 char long max
+					// read the sequence 3 letters at a time, starting at a specific position
+					// corresponding to the frame
+					for pos := startPos + 2; pos < seqSize; pos += 3 {
+
 						if currentLength == maxLineSize {
 							currentLength = 0
 							translated.WriteByte(endLine)
@@ -270,7 +267,8 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						}
 						// create an uint32 from the codon, to retrieve the corresponding
 						// AA from the map
-						codonCode = uint32(sequence.Sequence[i-2]) | uint32(sequence.Sequence[i-1])<<8 | uint32(sequence.Sequence[i])<<16
+						codonCode := uint32(sequence.Sequence[pos-2]) | uint32(sequence.Sequence[pos-1])<<8 | uint32(sequence.Sequence[pos])<<16
+
 						b := arrayCode[codonCode]
 						if b == byte(0) {
 							translated.WriteByte(unknown)
@@ -285,15 +283,18 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						}
 						currentLength++
 					}
+
 					// the last codon is only 2 nucleotid long, try to guess
 					// the corresponding AA
-					if (size-frame)%3 == 2 {
+					if (seqSize-startPos)%3 == 2 {
+
 						if currentLength == maxLineSize {
 							translated.WriteByte(endLine)
 							currentLength = 0
 							bytesToTrim++
 						}
-						codonCode = uint32(sequence.Sequence[size-2]) | uint32(sequence.Sequence[size-1])<<8
+						codonCode := uint32(sequence.Sequence[seqSize-2]) | uint32(sequence.Sequence[seqSize-1])<<8
+
 						b := arrayCode[codonCode]
 						if b == byte(0) {
 							translated.WriteByte(unknown)
@@ -307,33 +308,36 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 							}
 						}
 						currentLength++
-						// the last codon is only 1 nucleotid long, no way to guess
-						// the corresponding AA
-					} else if (size-frame)%3 == 1 {
+					}
+
+					// the last codon is only 1 nucleotid long, no way to guess
+					// the corresponding AA
+					if (seqSize-startPos)%3 == 1 {
 						if currentLength == maxLineSize {
-							translated.WriteByte(endLine)
 							currentLength = 0
+							translated.WriteByte(endLine)
 							bytesToTrim++
 						}
 						translated.WriteByte(unknown)
 						currentLength++
 						bytesToTrim++
 					}
+
 					if options.Trim && bytesToTrim > 0 {
 						// remove the last bytesToTrim bytes of the buffer
 						// as they are 'X', '*' or '\n'
 						translated.Truncate(translated.Len() - bytesToTrim)
 						currentLength -= bytesToTrim
 					}
-					bytesToTrim = 0
+
 					if currentLength != 0 {
 						translated.WriteByte(endLine)
 					}
+					frameIndex++
 				}
-				nbRunLoop += 3
 
-				// if in reverse mode, reverse-complement the sequence
-				if reverse && nbRunLoop < 6 {
+				if reverse && frameIndex < 6 {
+
 					// get the complementary sequence.
 					// Basically, switch
 					//   A <-> T
@@ -355,7 +359,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						}
 					}
 					// reverse the sequence
-					for i, j := 0, len(sequence.Sequence)-1; i < j; i, j = i+1, j-1 {
+					for i, j := 0, seqSize-1; i < j; i, j = i+1, j-1 {
 						sequence.Sequence[i], sequence.Sequence[j] = sequence.Sequence[j], sequence.Sequence[i]
 					}
 
@@ -366,45 +370,39 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						//
 						// use the matrix to keep track of the forward frame as it depends on the
 						// length of the sequence
-						switch len(sequence.Sequence) % 3 {
+						switch seqSize % 3 {
 						case 0:
-							reverseFrame[0] = 0
-							reverseFrame[1] = 2
-							reverseFrame[2] = 1
+							startPosition[0] = 0
+							startPosition[1] = 2
+							startPosition[2] = 1
 						case 1:
-							reverseFrame[0] = 1
-							reverseFrame[1] = 0
-							reverseFrame[2] = 2
+							startPosition[0] = 1
+							startPosition[1] = 0
+							startPosition[2] = 2
 						case 2:
-							reverseFrame[0] = 2
-							reverseFrame[1] = 1
-							reverseFrame[2] = 0
+							startPosition[0] = 2
+							startPosition[1] = 1
+							startPosition[2] = 0
 						}
 					}
 					// run the same loop, but with the reverse-complemented sequence
 					goto Translate
 				}
-				// if the buffer holds more than 10MB of data,
-				// write it to output file and reset the buffer
+
 				if translated.Len() > maxBufferSize {
 					_, err := out.Write(translated.Bytes())
 					if err != nil {
-						// if this failed, push the error to the error channel so we can return
-						// it to the user
 						select {
 						case errs <- fmt.Errorf("fail to write to output file: %v", err):
 						default:
 						}
-						// close the context to tell other running goroutines
-						// to stop
 						cancel()
-						// call wg.Done()
 						return
 					}
 					translated.Reset()
 				}
 			}
-			// some sequences left in the buffer
+
 			if translated.Len() > 0 {
 				_, err := out.Write(translated.Bytes())
 				if err != nil {
@@ -419,17 +417,21 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 		}()
 	}
 
-	readSequenceFromFasta(ctx, cancel, inputSequence, errs, fnaSequences)
+	readSequenceFromFasta(ctx, inputSequence, fnaSequences)
 
 	wg.Wait()
 
-	if ctx.Err() != nil {
-		return <-errs
+	select {
+	case err, ok := <-errs:
+		if ok {
+			return err
+		}
+	default:
 	}
 	return nil
 }
 
-func readSequenceFromFasta(ctx context.Context, cancel context.CancelFunc, inputSequence io.Reader, errs chan error, fnaSequences chan FastaSequence) {
+func readSequenceFromFasta(ctx context.Context, inputSequence io.Reader, fnaSequences chan FastaSequence) {
 
 	feeder := &fastaChannelFeeder{
 		IDBuffer:       bytes.NewBuffer(make([]byte, 0)),
@@ -438,42 +440,34 @@ func readSequenceFromFasta(ctx context.Context, cancel context.CancelFunc, input
 		FastaChan:      fnaSequences,
 	}
 
-	var readError error
 	scanner := bufio.NewScanner(inputSequence)
 
 Loop:
 	for scanner.Scan() {
 
 		line := scanner.Bytes()
-
 		if len(line) == 0 {
-			readError = fmt.Errorf("invalid fasta file: empty lines are forbidden")
-			break Loop
+			continue
 		}
 		if line[0] == '>' {
 
 			if feeder.IDBuffer.Len() > 0 {
-
 				select {
 				case <-ctx.Done():
 					break Loop
 				default:
 				}
-				readError = feeder.sendFasta()
-				if readError != nil {
-					errs <- readError
-					cancel()
-				}
+				feeder.sendFasta()
 			}
 			feeder.reset()
 
 			// parse the ID of the sequence. ID is formatted like this:
 			// >sequenceID comments
-			l := bytes.SplitN(line, []byte{space}, 2)
-			feeder.IDBuffer.Write(l[0])
+			seqInfo := bytes.SplitN(line, []byte{space}, 2)
+			feeder.IDBuffer.Write(seqInfo[0])
 
-			if len(l) > 1 {
-				feeder.CommentBuffer.Write(l[1])
+			if len(seqInfo) > 1 {
+				feeder.CommentBuffer.Write(seqInfo[1])
 			}
 		} else {
 			// if the line doesn't start with '>', then it's a part of the
@@ -482,19 +476,11 @@ Loop:
 		}
 	}
 
+	// don't forget to push last sequence
 	select {
 	case <-ctx.Done():
 	default:
-		// don't forget to push last sequence
-		readError = feeder.sendFasta()
-
-		// if an error occured during the parsing of the fasta file,
-		// return the error to trigger cancel()
-		// so we can smoothly terminate all goroutines
-		if readError != nil {
-			errs <- readError
-			cancel()
-		}
+		feeder.sendFasta()
 	}
 
 	close(fnaSequences)
@@ -529,7 +515,7 @@ func (f *fastaChannelFeeder) reset() {
 	f.CommentBuffer.Reset()
 }
 
-func (f *fastaChannelFeeder) sendFasta() error {
+func (f *fastaChannelFeeder) sendFasta() {
 
 	fastaSequence := FastaSequence{
 		ID:       make([]byte, f.IDBuffer.Len()),
@@ -558,11 +544,8 @@ func (f *fastaChannelFeeder) sendFasta() error {
 		case 'N':
 			fastaSequence.Sequence[i] = nCode
 		default:
-			return fmt.Errorf("invalid char in sequence %s: %s", fastaSequence.ID, string(b))
+			fmt.Printf("WARNING: invalid char in sequence %s: %s", fastaSequence.ID, string(b))
 		}
 	}
-
 	f.FastaChan <- fastaSequence
-
-	return nil
 }

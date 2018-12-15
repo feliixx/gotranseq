@@ -54,7 +54,10 @@ func TestAllOptions(t *testing.T) {
 			}
 
 			if want, got := test.Expected, out.String(); want != got {
-				compareByline(t, want, got)
+				t.Fail()
+				//	t.Errorf("different number of lines\nexpected %s\nbut got\n%s\n", want, got)
+
+				//	compareByline(t, want, got)
 			}
 
 			out.Reset()
