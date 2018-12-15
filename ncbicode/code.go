@@ -13,8 +13,7 @@ import (
 )
 
 var (
-	// Standard the standard code
-	Standard = map[string]byte{
+	standard = map[string]byte{
 		"TTT": 'F',
 		"TCT": 'S',
 		"TAT": 'Y',
@@ -80,8 +79,7 @@ var (
 		"GAG": 'E',
 		"GGG": 'G',
 	}
-	// ************************************
-	// diff from the standard code
+
 	vertebrateMitochondrialDiff = map[string]byte{
 		"AGA": '*',
 		"AGG": '*',
@@ -314,54 +312,74 @@ var (
 		"UAG": 'E',
 	}
 
-	// TableDiff store the map of diff from standard code
-	TableDiff = map[int]map[string]byte{
-		2:  vertebrateMitochondrialDiff,
-		3:  yeastMitochondrialDiff,
-		4:  moldProtozoanCoelenterateMitochondrialMycoplasmaSpiroplasmaDiff,
-		5:  invertebrateMitochondrialDiff,
-		6:  ciliateDasycladaceanHexamitaDiff,
-		9:  echinodermFlatwormMitochondrialDiff,
-		10: euplotidDiff,
-		11: bacterialArchaealPlantPlastidDiff,
-		12: alternativeYeastDiff,
-		13: ascidianMitochondrialDiff,
-		14: alternativeFlatwormMitochondrialDiff,
-		16: chlorophyceanMitochondrialDiff,
-		21: trematodeMitochondrialDiff,
-		22: scenedesmusObliquusMitochondrialDiff,
-		23: thraustochytriumMitochondrialDiff,
-		24: pterobranchiaMitochondrialDiff,
-		25: candidateDivisionSR1GracilibacteriaDiff,
-		26: pachysolenTannophilusDiff,
-		29: mesodiniumDiff,
-		30: peritrichDiff,
+	diffs = map[int]map[string]byte{
+		VertebrateMitochondrial: vertebrateMitochondrialDiff,
+		YeastMitochondrial:      yeastMitochondrialDiff,
+		MoldProtozoanCoelenterateMitochondrialMycoplasmaSpiroplasma: moldProtozoanCoelenterateMitochondrialMycoplasmaSpiroplasmaDiff,
+		InvertebrateMitochondrial:                                   invertebrateMitochondrialDiff,
+		CiliateDasycladaceanHexamita:                                ciliateDasycladaceanHexamitaDiff,
+		EchinodermFlatwormMitochondrial:                             echinodermFlatwormMitochondrialDiff,
+		Euplotid:                                                    euplotidDiff,
+		BacterialArchaealPlantPlastid:                               bacterialArchaealPlantPlastidDiff,
+		AlternativeYeast:                                            alternativeYeastDiff,
+		AscidianMitochondrial:                                       ascidianMitochondrialDiff,
+		AlternativeFlatwormMitochondrial:                            alternativeFlatwormMitochondrialDiff,
+		ChlorophyceanMitochondrial:                                  chlorophyceanMitochondrialDiff,
+		TrematodeMitochondrial:                                      trematodeMitochondrialDiff,
+		ScenedesmusObliquusMitochondrial:                            scenedesmusObliquusMitochondrialDiff,
+		ThraustochytriumMitochondrial:                               thraustochytriumMitochondrialDiff,
+		PterobranchiaMitochondrial:                                  pterobranchiaMitochondrialDiff,
+		CandidateDivisionSR1Gracilibacteria:                         candidateDivisionSR1GracilibacteriaDiff,
+		PachysolenTannophilus:                                       pachysolenTannophilusDiff,
+		Mesodinium:                                                  mesodiniumDiff,
+		Peritrich:                                                   peritrichDiff,
 	}
+)
+
+const (
+	Standard                                                    = 0
+	VertebrateMitochondrial                                     = 2
+	YeastMitochondrial                                          = 3
+	MoldProtozoanCoelenterateMitochondrialMycoplasmaSpiroplasma = 4
+	InvertebrateMitochondrial                                   = 5
+	CiliateDasycladaceanHexamita                                = 6
+	EchinodermFlatwormMitochondrial                             = 9
+	Euplotid                                                    = 10
+	BacterialArchaealPlantPlastid                               = 11
+	AlternativeYeast                                            = 12
+	AscidianMitochondrial                                       = 13
+	AlternativeFlatwormMitochondrial                            = 14
+	ChlorophyceanMitochondrial                                  = 16
+	TrematodeMitochondrial                                      = 21
+	ScenedesmusObliquusMitochondrial                            = 22
+	ThraustochytriumMitochondrial                               = 23
+	PterobranchiaMitochondrial                                  = 24
+	CandidateDivisionSR1Gracilibacteria                         = 25
+	PachysolenTannophilus                                       = 26
+	Mesodinium                                                  = 29
+	Peritrich                                                   = 30
 )
 
 // LoadTableCode returns a map of condon <-> AA
 func LoadTableCode(code int) (map[string]byte, error) {
 
-	m := map[string]byte{}
-	for k, v := range Standard {
-		m[k] = v
+	tableCodon := map[string]byte{}
+	for codon, aaCode := range standard {
+		tableCodon[codon] = aaCode
 	}
-	// if we use a different code, load the difference map
-	// and update the values
+
 	if code != 0 {
 
-		diff, ok := TableDiff[code]
+		tableDiff, ok := diffs[code]
 		if !ok {
 			return nil, fmt.Errorf("invalid table code: %v", code)
 		}
 
-		for k, v := range diff {
-			key := k
-			if strings.Contains(k, "U") {
-				key = strings.Replace(k, "U", "T", -1)
-			}
-			m[key] = v
+		for codon, aaCode := range tableDiff {
+
+			codon = strings.Replace(codon, "U", "T", -1)
+			tableCodon[codon] = aaCode
 		}
 	}
-	return m, nil
+	return tableCodon, nil
 }
