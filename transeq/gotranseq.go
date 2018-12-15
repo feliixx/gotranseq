@@ -49,6 +49,11 @@ var letterCode = map[byte]uint8{
 	'U': uCode,
 }
 
+const (
+	stopByte      = '*'
+	cleanStopByte = 'X'
+)
+
 // create the code map according to the selected table code
 func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 
@@ -153,11 +158,9 @@ func computeFrames(options Options) (frames []int, reverse bool, err error) {
 }
 
 const (
-	endLine       = '\n'
-	unknown       = 'X'
-	space         = ' '
-	stopByte      = '*'
-	cleanStopByte = 'X'
+	endLine = '\n'
+	unknown = 'X'
+	space   = ' '
 
 	// size of the buffer for writing to file
 	maxBufferSize = 1024 * 1024 * 30
@@ -275,7 +278,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 							bytesToTrim++
 						} else {
 							translated.WriteByte(b)
-							if b == stopByte {
+							if b == stopByte || b == cleanStopByte {
 								bytesToTrim++
 							} else {
 								bytesToTrim = 0
@@ -301,7 +304,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 							bytesToTrim++
 						} else {
 							translated.WriteByte(b)
-							if b == stopByte {
+							if b == stopByte || b == cleanStopByte {
 								bytesToTrim++
 							} else {
 								bytesToTrim = 0

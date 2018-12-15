@@ -17,6 +17,9 @@ tests=("-frame=1"
 "-frame=6 -clean"
 "-frame=6 -trim"
 "-frame=6 -alternative"
+"-frame=6 -trim -alternative"
+"-frame=6 -clean -alternative"
+"-frame=6 -clean -trim -alternative"
 "-frame=6 -table=2"
 "-frame=6 -table=3"
 "-frame=6 -table=4"
@@ -40,7 +43,7 @@ for test in "${tests[@]}"
 do 
     echo "{" >> data.json
     echo "\"options\": \"$test\"," >> data.json
-    # generate the expected output
+
     transeq -sequence $1 -outseq out.faa ${test[0]} ${test[1]}
     echo -n "\"expected\": \""  >> data.json 
     while IFS= read -r line 
@@ -52,6 +55,6 @@ do
 
 done
 
-# remove the last ',' to get a valid json
-sed -i '$ s/.$//' data.json
+truncate -s-2 data.json
+
 echo ']' >> data.json
