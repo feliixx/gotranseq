@@ -51,20 +51,22 @@ var letterCode = map[byte]uint8{
 }
 
 const (
-	stopByte      = '*'
-	cleanStopByte = 'X'
-
-	// uint8 code for supported nucleotides
 	nCode = uint8(0)
 	aCode = uint8(1)
 	cCode = uint8(2)
 	tCode = uint8(3)
 	uCode = uint8(3)
 	gCode = uint8(4)
+
+	stopByte = '*'
+	unknown  = 'X'
+	// Length of the array to store code/bytes
+	// uses gCode because it's the biggest uint8 of all codes
+	arrayCodeSize = (uint32(gCode) | uint32(gCode)<<8 | uint32(gCode)<<16) + 1
 )
 
 // create the code map according to the selected table code
-func createMapCode(code int, clean bool) (map[uint32]byte, error) {
+func createArrayCode(code int, clean bool) ([]byte, error) {
 
 	resultMap := map[uint32]byte{}
 	twoLetterMap := map[string][]byte{}
@@ -84,9 +86,9 @@ func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 		// each codon is represented by an unique uint32:
 		// each possible nucleotide is represented by an uint8 (255 possibility)
 		// the three first bytes are the the code for each nucleotide
-		// last byte is uint8(0)
+		// last byte is unused ( eq to uint8(0) )
 		// example:
-		// codon 'ACG' ==> uint8(1) | uint8(2) | uint8(4) | uint8(0)
+		// codon 'ACG' ==> uint32(aCode) | uint32(cCode)<<8 | uint32(gCode)<<16
 		uint32Code := uint32(tmpCode[0]) | uint32(tmpCode[1])<<8 | uint32(tmpCode[2])<<16
 		resultMap[uint32Code] = aaCode
 
@@ -119,19 +121,24 @@ func createMapCode(code int, clean bool) (map[uint32]byte, error) {
 	if clean {
 		for k, v := range resultMap {
 			if v == stopByte {
-				resultMap[k] = cleanStopByte
+				resultMap[k] = unknown
 			}
 		}
 	}
-	return resultMap, nil
+
+	r := make([]byte, arrayCodeSize)
+	for k, v := range resultMap {
+		r[k] = v
+	}
+	return r, nil
 }
 
-func computeFrames(options Options) (frames []int, reverse bool, err error) {
+func computeFrames(frameName string) (frames []int, reverse bool, err error) {
 
 	frames = make([]int, 6)
 	reverse = false
 
-	switch options.Frame {
+	switch frameName {
 	case "1":
 		frames[0] = 1
 	case "2":
@@ -162,22 +169,10 @@ func computeFrames(options Options) (frames []int, reverse bool, err error) {
 		}
 		reverse = true
 	default:
-		err = fmt.Errorf("wrong value for -f | --frame parameter: %s", options.Frame)
+		err = fmt.Errorf("wrong value for -f | --frame parameter: %s", frameName)
 	}
 	return frames, reverse, err
 }
-
-const (
-	// size of the buffer for writing to file
-	maxBufferSize = 1024 * 1024 * 30
-	// max line size for sequence
-	maxLineSize = 60
-	// Length of the array to store code/bytes
-	// uses gCode because it's the biggest uint8 of all codes
-	arrayCodeSize = (uint32(gCode) | uint32(gCode)<<8 | uint32(gCode)<<16) + 1
-	// suffixes ta add to sequence id for each frame
-	suffixes = "123456"
-)
 
 type writer struct {
 	buf            *bytes.Buffer
@@ -188,7 +183,7 @@ type writer struct {
 func (w *writer) addByte(b byte) {
 	w.buf.WriteByte(b)
 	w.currentLineLen++
-	if b == stopByte || b == cleanStopByte {
+	if b == stopByte || b == unknown {
 		w.bytesToTrim++
 	} else {
 		w.bytesToTrim = 0
@@ -196,7 +191,7 @@ func (w *writer) addByte(b byte) {
 }
 
 func (w *writer) addUnknown() {
-	w.buf.WriteByte('X')
+	w.buf.WriteByte(unknown)
 	w.currentLineLen++
 	w.bytesToTrim++
 }
@@ -207,20 +202,24 @@ func (w *writer) newLine() {
 	w.bytesToTrim++
 }
 
+const (
+	// size of the buffer for writing to file
+	maxBufferSize = 1024 * 1024 * 30
+	// max line size for sequence
+	maxLineSize = 60
+	// suffixes ta add to sequence id for each frame
+	suffixes = "123456"
+)
+
 // Translate read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
 func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
-	mapCode, err := createMapCode(options.Table, options.Clean)
+	arrayCode, err := createArrayCode(options.Table, options.Clean)
 	if err != nil {
 		return err
 	}
 
-	arrayCode := make([]byte, arrayCodeSize)
-	for k, v := range mapCode {
-		arrayCode[k] = v
-	}
-
-	framesToGenerate, reverse, err := computeFrames(options)
+	framesToGenerate, reverse, err := computeFrames(options.Frame)
 	if err != nil {
 		return err
 	}
@@ -257,9 +256,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 				}
 
 				frameIndex := 0
-				startPosition[0] = 0
-				startPosition[1] = 1
-				startPosition[2] = 2
+				startPosition[0], startPosition[1], startPosition[2] = 0, 1, 2
 
 				idSize := int(binary.LittleEndian.Uint32(sequence[0:4]))
 				nuclSeqLength := len(sequence) - idSize
@@ -387,17 +384,11 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						// length of the sequence
 						switch nuclSeqLength % 3 {
 						case 0:
-							startPosition[0] = 0
-							startPosition[1] = 2
-							startPosition[2] = 1
+							startPosition[0], startPosition[1], startPosition[2] = 0, 2, 1
 						case 1:
-							startPosition[0] = 1
-							startPosition[1] = 0
-							startPosition[2] = 2
+							startPosition[0], startPosition[1], startPosition[2] = 1, 0, 2
 						case 2:
-							startPosition[0] = 2
-							startPosition[1] = 1
-							startPosition[2] = 0
+							startPosition[0], startPosition[1], startPosition[2] = 2, 1, 0
 						}
 					}
 					// run the same loop, but with the reverse-complemented sequence
@@ -432,11 +423,9 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 			}
 		}()
 	}
-
 	readSequenceFromFasta(ctx, inputSequence, fnaSequences)
 
 	wg.Wait()
-
 	select {
 	case err, ok := <-errs:
 		if ok {
@@ -450,14 +439,11 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 func readSequenceFromFasta(ctx context.Context, inputSequence io.Reader, fnaSequences chan encodedSequence) {
 
 	feeder := &fastaChannelFeeder{
-		idBuffer:       bytes.NewBuffer(make([]byte, 0)),
-		commentBuffer:  bytes.NewBuffer(make([]byte, 0)),
-		sequenceBuffer: bytes.NewBuffer(make([]byte, 0)),
+		idBuffer:       bytes.NewBuffer(nil),
+		commentBuffer:  bytes.NewBuffer(nil),
+		sequenceBuffer: bytes.NewBuffer(nil),
 		fastaChan:      fnaSequences,
 	}
-
-	scanner := bufio.NewScanner(inputSequence)
-
 	// fasta format is:
 	//
 	// >sequenceID some comments on sequence
@@ -466,6 +452,7 @@ func readSequenceFromFasta(ctx context.Context, inputSequence io.Reader, fnaSequ
 	//
 	// see https://blast.ncbi.nlm.nih.gov/Blast.cgi?CMD=Web&PAGE_TYPE=BlastDocs&DOC_TYPE=BlastHelp
 	// section 1 for details
+	scanner := bufio.NewScanner(inputSequence)
 Loop:
 	for scanner.Scan() {
 
@@ -500,14 +487,12 @@ Loop:
 			feeder.sequenceBuffer.Write(line)
 		}
 	}
-
 	// don't forget to push last sequence
 	select {
 	case <-ctx.Done():
 	default:
 		feeder.sendFasta()
 	}
-
 	close(fnaSequences)
 }
 
