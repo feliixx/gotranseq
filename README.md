@@ -1,3 +1,8 @@
+[![Build Status](https://travis-ci.org/feliixx/gotranseq.svg?branch=master)](https://travis-ci.org/feliixx/gotranseq)
+[![Go Report Card](https://goreportcard.com/badge/github.com/feliixx/gotranseq)](https://goreportcard.com/report/github.com/feliixx/gotranseq)
+[![codecov](https://codecov.io/gh/feliixx/gotranseq/branch/master/graph/badge.svg)](https://codecov.io/gh/feliixx/gotranseq)
+[![GoDoc](https://godoc.org/github.com/feliixx/gotranseq/transeq?status.svg)](http://godoc.org/github.com/feliixx/gotranseq/transeq)
+
 # Gotranseq
 
 Translate nucleic acid sequences to their corresponding peptide sequences. 
@@ -9,7 +14,7 @@ EMBOSS transeq is a great tool, but can be quite painfull for some use cases,
 because it silently truncate the sequence ID if it contains chars like **':'**, 
 or rename the sequence ID if it contains chars like **'|'**
 
-This tool is an attempt to solve this porblem. It's also way faster than EMBOSS
+This tool is an attempt to solve this problem. It's also way faster than EMBOSS
 transeq because it can be parrallelized: 
 
 benchmark on ubuntu 16.04, machine with 2 CPU Intel(R) Core(TM)2 Duo CPU 3.00GHz
