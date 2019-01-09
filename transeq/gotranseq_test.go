@@ -100,7 +100,7 @@ func compareByline(t *testing.T, want, got string) {
 
 func BenchmarkTranslate(b *testing.B) {
 
-	input, err := os.Open("testdata/big.fna")
+	input, err := os.Open("testdata/med.fna")
 	if err != nil {
 		b.Error(err)
 	}

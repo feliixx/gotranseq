@@ -51,91 +51,86 @@ var letterCode = map[byte]uint8{
 }
 
 const (
-	nCode = uint8(0)
-	aCode = uint8(1)
-	cCode = uint8(2)
-	tCode = uint8(3)
-	uCode = uint8(3)
-	gCode = uint8(4)
+	// nCode has to be 0 in order to compute two-letters code
+	nCode uint8 = iota
+	aCode
+	cCode
+	tCode
+	gCode
+	uCode = tCode
 
-	stopByte = '*'
-	unknown  = 'X'
 	// Length of the array to store code/bytes
 	// uses gCode because it's the biggest uint8 of all codes
 	arrayCodeSize = (uint32(gCode) | uint32(gCode)<<8 | uint32(gCode)<<16) + 1
+
+	stop    = '*'
+	unknown = 'X'
 )
 
 // create the code map according to the selected table code
-func createArrayCode(code int, clean bool) ([]byte, error) {
+func createArrayCode(tableCode int, clean bool) (codes [arrayCodeSize]byte, err error) {
 
 	resultMap := map[uint32]byte{}
 	twoLetterMap := map[string][]byte{}
 
-	tmpCode := make([]uint8, 4)
-
-	codeMap, err := ncbicode.LoadTableCode(code)
+	codeMap, err := ncbicode.LoadTableCode(tableCode)
 	if err != nil {
-		return nil, err
+		return codes, err
 	}
 
 	for codon, aaCode := range codeMap {
-		// generate 3 letter code
-		for i := 0; i < 3; i++ {
-			tmpCode[i] = letterCode[codon[i]]
-		}
-		// each codon is represented by an unique uint32:
-		// each possible nucleotide is represented by an uint8 (255 possibility)
-		// the three first bytes are the the code for each nucleotide
-		// last byte is unused ( eq to uint8(0) )
-		// example:
-		// codon 'ACG' ==> uint32(aCode) | uint32(cCode)<<8 | uint32(gCode)<<16
-		uint32Code := uint32(tmpCode[0]) | uint32(tmpCode[1])<<8 | uint32(tmpCode[2])<<16
+
+		// codon is always a 3 char string, for example 'ACG'
+		// each  nucleotide of the codon is represented by an uint8
+		n1, n2, n3 := letterCode[codon[0]], letterCode[codon[1]], letterCode[codon[2]]
+
+		// convert the codon to an unique uint32:
+		uint32Code := uint32(n1) | uint32(n2)<<8 | uint32(n3)<<16
 		resultMap[uint32Code] = aaCode
 
-		// generate 2 letter code
-		codes, ok := twoLetterMap[codon[0:2]]
+		// in some case, all codon for an AA will start with the same
+		// two nucleotid
+		// for example:
+		// GTC -> 'V'
+		// GTG -> 'V'
+		aaCodeArray, ok := twoLetterMap[codon[:2]]
 		if !ok {
-			twoLetterMap[codon[0:2]] = []byte{aaCode}
+			twoLetterMap[codon[:2]] = []byte{aaCode}
 		} else {
-			twoLetterMap[codon[0:2]] = append(codes, aaCode)
+			twoLetterMap[codon[:2]] = append(aaCodeArray, aaCode)
 		}
 	}
-	for twoLetterCodon, codes := range twoLetterMap {
-		uniqueAA := true
-		for i := 0; i < len(codes); i++ {
+	for twoLetterCodon, aaCode := range twoLetterMap {
 
-			if codes[i] != codes[0] {
+		uniqueAA := true
+		for _, c := range aaCode {
+			if c != aaCode[0] {
 				uniqueAA = false
+				break
 			}
 		}
 		if uniqueAA {
-			first := letterCode[twoLetterCodon[0]]
-			second := letterCode[twoLetterCodon[1]]
+			n1, n2 := letterCode[twoLetterCodon[0]], letterCode[twoLetterCodon[1]]
 
-			uint32Code := uint32(first) | uint32(second)<<8
-			resultMap[uint32Code] = codes[0]
-		}
-	}
-	// if clean is specified, we want to replace all '*' by 'X' in the output
-	// sequence, so replace all occurrences of '*' directly in the ref map
-	if clean {
-		for k, v := range resultMap {
-			if v == stopByte {
-				resultMap[k] = unknown
-			}
+			uint32Code := uint32(n1) | uint32(n2)<<8
+			resultMap[uint32Code] = aaCode[0]
 		}
 	}
 
-	r := make([]byte, arrayCodeSize)
+	for i := range codes {
+		codes[i] = unknown
+	}
 	for k, v := range resultMap {
-		r[k] = v
+		if clean && v == stop {
+			continue
+		}
+		codes[k] = v
 	}
-	return r, nil
+	return codes, nil
 }
 
-func computeFrames(frameName string) (frames []int, reverse bool, err error) {
+func computeFrames(frameName string) (frames [6]int, reverse bool, err error) {
 
-	frames = make([]int, 6)
 	reverse = false
 
 	switch frameName {
@@ -174,41 +169,9 @@ func computeFrames(frameName string) (frames []int, reverse bool, err error) {
 	return frames, reverse, err
 }
 
-type writer struct {
-	buf            *bytes.Buffer
-	currentLineLen int
-	bytesToTrim    int
-}
-
-func (w *writer) addByte(b byte) {
-	w.buf.WriteByte(b)
-	w.currentLineLen++
-	if b == stopByte || b == unknown {
-		w.bytesToTrim++
-	} else {
-		w.bytesToTrim = 0
-	}
-}
-
-func (w *writer) addUnknown() {
-	w.buf.WriteByte(unknown)
-	w.currentLineLen++
-	w.bytesToTrim++
-}
-
-func (w *writer) newLine() {
-	w.buf.WriteByte('\n')
-	w.currentLineLen = 0
-	w.bytesToTrim++
-}
-
 const (
 	// size of the buffer for writing to file
 	maxBufferSize = 1024 * 1024 * 30
-	// max line size for sequence
-	maxLineSize = 60
-	// suffixes ta add to sequence id for each frame
-	suffixes = "123456"
 )
 
 // Translate read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
@@ -239,13 +202,8 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 			defer wg.Done()
 
-			startPosition := make([]int, 3)
-
-			w := &writer{
-				buf:            bytes.NewBuffer(nil),
-				bytesToTrim:    0,
-				currentLineLen: 0,
-			}
+			var startPosition [3]int
+			w := newWriter()
 
 			for sequence := range fnaSequences {
 
@@ -269,76 +227,38 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						continue
 					}
 
-					// sequence id should look like
-					// >sequenceID_<frame> comment
-					idEnd := bytes.IndexByte(sequence[4:idSize], ' ')
-					if idEnd != -1 {
-						w.buf.Write(sequence[4 : 4+idEnd])
-						w.buf.WriteByte('_')
-						w.buf.WriteByte(suffixes[frameIndex])
-						w.buf.Write(sequence[4+idEnd : idSize])
-					} else {
-						w.buf.Write(sequence[4:idSize])
-						w.buf.WriteByte('_')
-						w.buf.WriteByte(suffixes[frameIndex])
-					}
+					w.writeID(sequence[4:idSize], frameIndex)
 					w.newLine()
 
-					// if in trim mode, nb of bytes to trim (nb of successive 'X', '*' and '\n'
-					// from right end of the sequence)
-					w.bytesToTrim = 0
+					w.toTrim = 0
 					w.currentLineLen = 0
 
 					// read the sequence 3 letters at a time, starting at a specific position
 					// corresponding to the frame
 					for pos := startPos + 2 + idSize; pos < len(sequence); pos += 3 {
 
-						if w.currentLineLen == maxLineSize {
-							w.newLine()
-						}
 						// create an uint32 from the codon, to retrieve the corresponding
 						// AA from the map
 						codonCode := uint32(sequence[pos-2]) | uint32(sequence[pos-1])<<8 | uint32(sequence[pos])<<16
 
-						b := arrayCode[codonCode]
-						if b != byte(0) {
-							w.addByte(b)
-						} else {
-							w.addUnknown()
-						}
+						w.addByte(arrayCode[codonCode])
 					}
 
 					// the last codon is only 2 nucleotid long, try to guess
 					// the corresponding AA
 					if (nuclSeqLength-startPos)%3 == 2 {
-
-						if w.currentLineLen == maxLineSize {
-							w.newLine()
-						}
 						codonCode := uint32(sequence[len(sequence)-2]) | uint32(sequence[len(sequence)-1])<<8
-
-						b := arrayCode[codonCode]
-						if b != byte(0) {
-							w.addByte(b)
-						} else {
-							w.addUnknown()
-						}
+						w.addByte(arrayCode[codonCode])
 					}
 
 					// the last codon is only 1 nucleotid long, no way to guess
 					// the corresponding AA
 					if (nuclSeqLength-startPos)%3 == 1 {
-						if w.currentLineLen == maxLineSize {
-							w.newLine()
-						}
-						w.addUnknown()
+						w.addByte(unknown)
 					}
 
-					if options.Trim && w.bytesToTrim > 0 {
-						// remove the last bytesToTrim bytes of the buffer
-						// as they are 'X', '*' or '\n'
-						w.buf.Truncate(w.buf.Len() - w.bytesToTrim)
-						w.currentLineLen -= w.bytesToTrim
+					if options.Trim && w.toTrim > 0 {
+						w.Trim()
 					}
 
 					if w.currentLineLen != 0 {
@@ -396,36 +316,17 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 				}
 
 				if w.buf.Len() > maxBufferSize {
-					_, err := out.Write(w.buf.Bytes())
-					if err != nil {
-						select {
-						case errs <- fmt.Errorf("fail to write to output file: %v", err):
-						default:
-						}
-						cancel()
-						return
-					}
-					w.buf.Reset()
+					w.flush(out, cancel, errs)
 				}
 				pool.Put(sequence)
 			}
-
-			if w.buf.Len() > 0 {
-				_, err := out.Write(w.buf.Bytes())
-				if err != nil {
-					select {
-					case errs <- fmt.Errorf("fail to write to output file: %v", err):
-					default:
-					}
-					cancel()
-					return
-				}
-			}
+			w.flush(out, cancel, errs)
 		}()
 	}
 	readSequenceFromFasta(ctx, inputSequence, fnaSequences)
 
 	wg.Wait()
+
 	select {
 	case err, ok := <-errs:
 		if ok {
@@ -438,12 +339,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 func readSequenceFromFasta(ctx context.Context, inputSequence io.Reader, fnaSequences chan encodedSequence) {
 
-	feeder := &fastaChannelFeeder{
-		idBuffer:       bytes.NewBuffer(nil),
-		commentBuffer:  bytes.NewBuffer(nil),
-		sequenceBuffer: bytes.NewBuffer(nil),
-		fastaChan:      fnaSequences,
-	}
+	feeder := newFastaChannelFeeder(fnaSequences)
 	// fasta format is:
 	//
 	// >sequenceID some comments on sequence
@@ -474,12 +370,13 @@ Loop:
 
 			// parse the ID of the sequence. ID is formatted like this:
 			// >sequenceID comments
-			seqID := bytes.SplitN(line, []byte{' '}, 2)
-			feeder.idBuffer.Write(seqID[0])
-
-			if len(seqID) > 1 {
+			idEnd := bytes.IndexByte(line, ' ')
+			if idEnd != -1 {
+				feeder.idBuffer.Write(line[:idEnd])
 				feeder.commentBuffer.WriteByte(' ')
-				feeder.commentBuffer.Write(seqID[1])
+				feeder.commentBuffer.Write(line[idEnd+1:])
+			} else {
+				feeder.idBuffer.Write(line)
 			}
 		} else {
 			// if the line doesn't start with '>', then it's a part of the
@@ -487,12 +384,8 @@ Loop:
 			feeder.sequenceBuffer.Write(line)
 		}
 	}
-	// don't forget to push last sequence
-	select {
-	case <-ctx.Done():
-	default:
-		feeder.sendFasta()
-	}
+	feeder.sendFasta()
+
 	close(fnaSequences)
 }
 
@@ -517,53 +410,4 @@ func getSizedSlice(idSize, requiredSize int) encodedSequence {
 		s = append(s, byte(0))
 	}
 	return s[0:requiredSize]
-}
-
-func (f *fastaChannelFeeder) sendFasta() {
-
-	idSize := 4 + f.idBuffer.Len() + f.commentBuffer.Len()
-	requiredSize := idSize + f.sequenceBuffer.Len()
-
-	s := getSizedSlice(idSize, requiredSize)
-
-	if f.commentBuffer.Len() > 0 {
-		copy(s[idSize-f.commentBuffer.Len():idSize], f.commentBuffer.Bytes())
-	}
-
-	copy(s[4:4+f.idBuffer.Len()], f.idBuffer.Bytes())
-
-	// convert the sequence of bytes to an array of uint8 codes,
-	// so a codon (3 nucleotides | 3 bytes ) can be represented
-	// as an uint32
-	for i, b := range f.sequenceBuffer.Bytes() {
-
-		switch b {
-		case 'A':
-			s[i+idSize] = aCode
-		case 'C':
-			s[i+idSize] = cCode
-		case 'G':
-			s[i+idSize] = gCode
-		case 'T', 'U':
-			s[i+idSize] = tCode
-		case 'N':
-			s[i+idSize] = nCode
-		default:
-			fmt.Printf("WARNING: invalid char in sequence %s: %s, ignoring", s[4:4+idSize], string(b))
-		}
-	}
-	f.fastaChan <- s
-}
-
-type fastaChannelFeeder struct {
-	idBuffer       *bytes.Buffer
-	commentBuffer  *bytes.Buffer
-	sequenceBuffer *bytes.Buffer
-	fastaChan      chan encodedSequence
-}
-
-func (f *fastaChannelFeeder) reset() {
-	f.idBuffer.Reset()
-	f.sequenceBuffer.Reset()
-	f.commentBuffer.Reset()
 }

@@ -14,11 +14,6 @@ const (
 	toolName = "gotranseq"
 )
 
-func printErrorAndExit(err error) {
-	fmt.Printf("error: %v\n", err)
-	os.Exit(1)
-}
-
 func run(options transeq.Options) error {
 
 	if options.Sequence == "" {
