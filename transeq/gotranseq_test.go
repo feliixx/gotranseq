@@ -106,10 +106,8 @@ func BenchmarkTranslate(b *testing.B) {
 	}
 
 	options := transeq.Options{
-		Optional: transeq.Optional{
-			Frame:     "6",
-			NumWorker: 3,
-		},
+		Frame:     "6",
+		NumWorker: 3,
 	}
 
 	b.ResetTimer()

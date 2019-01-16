@@ -12,121 +12,14 @@ import (
 	"github.com/feliixx/gotranseq/ncbicode"
 )
 
-// Options struct to store command line args
+// Options struct to store required command line args
 type Options struct {
-	Required `group:"required"`
-	Optional `group:"optional"`
-	General  `group:"general"`
-}
-
-// Required struct to store required command line args
-type Required struct {
-	Sequence string `short:"s" long:"sequence" value-name:"<filename>" description:"Nucleotide sequence(s) filename"`
-	Outseq   string `short:"o" long:"outseq" value-name:"<filename>" description:"Protein sequence filename"`
-}
-
-// Optional struct to store required command line args
-type Optional struct {
 	Frame       string `short:"f" long:"frame" value-name:"<code>" description:"Frame to translate. Possible values:\n  [1, 2, 3, F, -1, -2, -3, R, 6]\n F: forward three frames\n R: reverse three frames\n 6: all 6 frames\n" default:"1"`
 	Table       int    `short:"t" long:"table" value-name:"<code>" description:"NCBI code to use, see https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi?chapter=tgencodes#SG1 for details. Available codes: \n 0: Standard code\n 2: The Vertebrate Mitochondrial Code\n 3: The Yeast Mitochondrial Code\n 4: The Mold, Protozoan, and Coelenterate Mitochondrial Code and the Mycoplasma/Spiroplasma Code\n 5: The Invertebrate Mitochondrial Code\n 6: The Ciliate, Dasycladacean and Hexamita Nuclear Code\n 9: The Echinoderm and Flatworm Mitochondrial Code\n 10: The Euplotid Nuclear Code\n 11: The Bacterial, Archaeal and Plant Plastid Code\n 12: The Alternative Yeast Nuclear Code\n 13: The Ascidian Mitochondrial Code\n 14: The Alternative Flatworm Mitochondrial Code\n16: Chlorophycean Mitochondrial Code\n 21: Trematode Mitochondrial Code\n22: Scenedesmus obliquus Mitochondrial Code\n 23: Thraustochytrium Mitochondrial Code\n 24: Pterobranchia Mitochondrial Code\n 25: Candidate Division SR1 and Gracilibacteria Code\n 26: Pachysolen tannophilus Nuclear Code\n 29: Mesodinium Nuclear\n 30: Peritrich Nuclear\n" default:"0"`
 	Clean       bool   `short:"c" long:"clean" description:"Replace stop codon '*' by 'X'"`
 	Alternative bool   `short:"a" long:"alternative" description:"Define frame '-1' as using the set of codons starting with the last codon of the sequence"`
 	Trim        bool   `short:"T" long:"trim" description:"Removes all 'X' and '*' characters from the right end of the translation. The trimming process starts at the end and continues until the next character is not a 'X' or a '*'"`
 	NumWorker   int    `short:"n" long:"numcpu" value-name:"<n>" description:"Number of threads to use, default is number of CPU"`
-}
-
-// General struct to store required command line args
-type General struct {
-	Help    bool `short:"h" long:"help" description:"Show this help message"`
-	Version bool `short:"v" long:"version" description:"Print the tool version and exit"`
-}
-
-var letterCode = map[byte]uint8{
-	'A': aCode,
-	'C': cCode,
-	'T': tCode,
-	'G': gCode,
-	'N': nCode,
-	'U': uCode,
-}
-
-const (
-	// nCode has to be 0 in order to compute two-letters code
-	nCode uint8 = iota
-	aCode
-	cCode
-	tCode
-	gCode
-	uCode = tCode
-
-	// Length of the array to store code/bytes
-	// uses gCode because it's the biggest uint8 of all codes
-	arrayCodeSize = (uint32(gCode) | uint32(gCode)<<8 | uint32(gCode)<<16) + 1
-
-	stop    = '*'
-	unknown = 'X'
-)
-
-// create the code map according to the selected table code
-func createArrayCode(tableCode int, clean bool) (codes [arrayCodeSize]byte, err error) {
-
-	resultMap := map[uint32]byte{}
-	twoLetterMap := map[string][]byte{}
-
-	codeMap, err := ncbicode.LoadTableCode(tableCode)
-	if err != nil {
-		return codes, err
-	}
-
-	for codon, aaCode := range codeMap {
-
-		// codon is always a 3 char string, for example 'ACG'
-		// each  nucleotide of the codon is represented by an uint8
-		n1, n2, n3 := letterCode[codon[0]], letterCode[codon[1]], letterCode[codon[2]]
-
-		// convert the codon to an unique uint32:
-		uint32Code := uint32(n1) | uint32(n2)<<8 | uint32(n3)<<16
-		resultMap[uint32Code] = aaCode
-
-		// in some case, all codon for an AA will start with the same
-		// two nucleotid
-		// for example:
-		// GTC -> 'V'
-		// GTG -> 'V'
-		aaCodeArray, ok := twoLetterMap[codon[:2]]
-		if !ok {
-			twoLetterMap[codon[:2]] = []byte{aaCode}
-		} else {
-			twoLetterMap[codon[:2]] = append(aaCodeArray, aaCode)
-		}
-	}
-	for twoLetterCodon, aaCode := range twoLetterMap {
-
-		uniqueAA := true
-		for _, c := range aaCode {
-			if c != aaCode[0] {
-				uniqueAA = false
-				break
-			}
-		}
-		if uniqueAA {
-			n1, n2 := letterCode[twoLetterCodon[0]], letterCode[twoLetterCodon[1]]
-
-			uint32Code := uint32(n1) | uint32(n2)<<8
-			resultMap[uint32Code] = aaCode[0]
-		}
-	}
-
-	for i := range codes {
-		codes[i] = unknown
-	}
-	for k, v := range resultMap {
-		if clean && v == stop {
-			continue
-		}
-		codes[k] = v
-	}
-	return codes, nil
 }
 
 func computeFrames(frameName string) (frames [6]int, reverse bool, err error) {
@@ -171,18 +64,18 @@ func computeFrames(frameName string) (frames [6]int, reverse bool, err error) {
 
 const (
 	// size of the buffer for writing to file
-	maxBufferSize = 1024 * 1024 * 30
+	maxBufferSize = 1024 * 1024 * 10
 )
 
 // Translate read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
 func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
-	arrayCode, err := createArrayCode(options.Table, options.Clean)
+	framesToGenerate, reverse, err := computeFrames(options.Frame)
 	if err != nil {
 		return err
 	}
 
-	framesToGenerate, reverse, err := computeFrames(options.Frame)
+	codeMap, err := ncbicode.LoadTableCode(options.Table)
 	if err != nil {
 		return err
 	}
@@ -202,8 +95,8 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 			defer wg.Done()
 
-			var startPosition [3]int
-			w := newWriter()
+			var startPos [3]int
+			w := newWriter(codeMap, options.Clean)
 
 			for sequence := range fnaSequences {
 
@@ -214,13 +107,13 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 				}
 
 				frameIndex := 0
-				startPosition[0], startPosition[1], startPosition[2] = 0, 1, 2
+				startPos[0], startPos[1], startPos[2] = 0, 1, 2
 
 				idSize := int(binary.LittleEndian.Uint32(sequence[0:4]))
 				nuclSeqLength := len(sequence) - idSize
 
 			Translate:
-				for _, startPos := range startPosition {
+				for _, startPos := range startPos {
 
 					if framesToGenerate[frameIndex] == 0 {
 						frameIndex++
@@ -240,21 +133,20 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						// create an uint32 from the codon, to retrieve the corresponding
 						// AA from the map
 						codonCode := uint32(sequence[pos-2]) | uint32(sequence[pos-1])<<8 | uint32(sequence[pos])<<16
-
-						w.addByte(arrayCode[codonCode])
+						w.writeAA(codonCode)
 					}
 
 					// the last codon is only 2 nucleotid long, try to guess
 					// the corresponding AA
 					if (nuclSeqLength-startPos)%3 == 2 {
 						codonCode := uint32(sequence[len(sequence)-2]) | uint32(sequence[len(sequence)-1])<<8
-						w.addByte(arrayCode[codonCode])
+						w.writeAA(codonCode)
 					}
 
 					// the last codon is only 1 nucleotid long, no way to guess
 					// the corresponding AA
 					if (nuclSeqLength-startPos)%3 == 1 {
-						w.addByte(unknown)
+						w.writeAA(0)
 					}
 
 					if options.Trim && w.toTrim > 0 {
@@ -304,11 +196,11 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 						// length of the sequence
 						switch nuclSeqLength % 3 {
 						case 0:
-							startPosition[0], startPosition[1], startPosition[2] = 0, 2, 1
+							startPos[0], startPos[1], startPos[2] = 0, 2, 1
 						case 1:
-							startPosition[0], startPosition[1], startPosition[2] = 1, 0, 2
+							startPos[0], startPos[1], startPos[2] = 1, 0, 2
 						case 2:
-							startPosition[0], startPosition[1], startPosition[2] = 2, 1, 0
+							startPos[0], startPos[1], startPos[2] = 2, 1, 0
 						}
 					}
 					// run the same loop, but with the reverse-complemented sequence
