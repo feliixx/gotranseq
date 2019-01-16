@@ -14,7 +14,26 @@ const (
 	toolName = "gotranseq"
 )
 
-func run(options transeq.Options) error {
+// GlobalOptions struct to store command line args
+type GlobalOptions struct {
+	Required        `group:"required"`
+	transeq.Options `group:"optional"`
+	General         `group:"general"`
+}
+
+// Required struct to store required command line args
+type Required struct {
+	Sequence string `short:"s" long:"sequence" value-name:"<filename>" description:"Nucleotide sequence(s) filename"`
+	Outseq   string `short:"o" long:"outseq" value-name:"<filename>" description:"Protein sequence filename"`
+}
+
+// General struct to store required command line args
+type General struct {
+	Help    bool `short:"h" long:"help" description:"Show this help message"`
+	Version bool `short:"v" long:"version" description:"Print the tool version and exit"`
+}
+
+func run(options GlobalOptions) error {
 
 	if options.Sequence == "" {
 		return fmt.Errorf("missing required parameter -s | -sequence, try %s --help for details", toolName)
@@ -39,12 +58,12 @@ func run(options transeq.Options) error {
 	}
 	defer out.Close()
 
-	return transeq.Translate(in, out, options)
+	return transeq.Translate(in, out, options.Options)
 }
 
 func main() {
 
-	var options transeq.Options
+	var options GlobalOptions
 	p := flags.NewParser(&options, flags.Default&^flags.HelpFlag)
 	_, err := p.Parse()
 	if err != nil {
