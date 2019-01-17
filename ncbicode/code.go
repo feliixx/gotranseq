@@ -368,7 +368,7 @@ func LoadTableCode(code int) (map[string]byte, error) {
 		tableCodon[codon] = aaCode
 	}
 
-	if code != 0 {
+	if code != Standard {
 
 		tableDiff, ok := diffs[code]
 		if !ok {
