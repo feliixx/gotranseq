@@ -21,22 +21,14 @@ const (
 	arrayCodeSize = (uint32(gCode) | uint32(gCode)<<8 | uint32(gCode)<<16) + 1
 )
 
-var letterCode = map[byte]uint8{
-	'A': aCode,
-	'C': cCode,
-	'T': tCode,
-	'G': gCode,
-	'N': nCode,
-	'U': uCode,
-}
-
 type writer struct {
 	buf            *bytes.Buffer
 	currentLineLen int
 	// if in trim mode, nb of bytes to trim (nb of successive 'X', '*' and '\n'
 	// from right end of the sequence)
 	toTrim int
-	codes  [arrayCodeSize]byte
+	// array storing the AA code at the corresponding codon index
+	codes [arrayCodeSize]byte
 }
 
 func newWriter(codeMap map[string]byte, clean bool) *writer {
@@ -73,12 +65,12 @@ const (
 	unknown = 'X'
 )
 
-func (w *writer) writeAA(codonCode uint32) {
+func (w *writer) writeAA(n1, n2, n3 byte) {
 
 	if w.currentLineLen == maxLineSize {
 		w.newLine()
 	}
-	aaCode := w.codes[codonCode]
+	aaCode := w.codes[codonCode(n1, n2, n3)]
 	w.buf.WriteByte(aaCode)
 	w.currentLineLen++
 
@@ -115,27 +107,30 @@ func (w *writer) flush(out io.Writer, cancel context.CancelFunc, errs chan error
 	w.buf.Reset()
 }
 
+var letterCode = map[byte]uint8{
+	'A': aCode,
+	'C': cCode,
+	'T': tCode,
+	'G': gCode,
+	'N': nCode,
+	'U': uCode,
+}
+
 // create the code map according to the selected table code
 func createArrayCode(codeMap map[string]byte, clean bool) [arrayCodeSize]byte {
 
+	var twoLetterMap = map[string][]byte{}
 	var codes [arrayCodeSize]byte
 	for i := range codes {
 		codes[i] = unknown
 	}
-
-	twoLetterMap := map[string][]byte{}
-
 	for codon, aaCode := range codeMap {
 
 		if !(clean && aaCode == stop) {
-
 			// codon is always a 3 char string, for example 'ACG'
 			// each  nucleotide of the codon is represented by an uint8
 			n1, n2, n3 := letterCode[codon[0]], letterCode[codon[1]], letterCode[codon[2]]
-
-			// convert the codon to an unique uint32:
-			uint32Code := uint32(n1) | uint32(n2)<<8 | uint32(n3)<<16
-			codes[uint32Code] = aaCode
+			codes[codonCode(n1, n2, n3)] = aaCode
 		}
 
 		// in some case, all codon for an AA will start with the same
@@ -149,7 +144,6 @@ func createArrayCode(codeMap map[string]byte, clean bool) [arrayCodeSize]byte {
 		} else {
 			twoLetterMap[codon[:2]] = append(aaCodeArray, aaCode)
 		}
-
 	}
 
 	for twoLetterCodon, aaCodeArray := range twoLetterMap {
@@ -167,12 +161,13 @@ func createArrayCode(codeMap map[string]byte, clean bool) [arrayCodeSize]byte {
 			if clean && aaCode == stop {
 				continue
 			}
-
 			n1, n2 := letterCode[twoLetterCodon[0]], letterCode[twoLetterCodon[1]]
-
-			uint32Code := uint32(n1) | uint32(n2)<<8
-			codes[uint32Code] = aaCode
+			codes[codonCode(n1, n2, nCode)] = aaCode
 		}
 	}
 	return codes
+}
+
+func codonCode(n1, n2, n3 byte) uint32 {
+	return uint32(n1) | uint32(n2)<<8 | uint32(n3)<<16
 }

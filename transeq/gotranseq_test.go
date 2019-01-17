@@ -55,7 +55,6 @@ func TestAllOptions(t *testing.T) {
 			}
 
 			if want, got := test.Expected, out.String(); want != got {
-				//t.Fail()
 				t.Errorf("different number of lines\nexpected %s\nbut got\n%s\n", want, got)
 			}
 
@@ -107,7 +106,7 @@ func BenchmarkTranslate(b *testing.B) {
 
 	options := transeq.Options{
 		Frame:     "6",
-		NumWorker: 3,
+		NumWorker: 1,
 	}
 
 	b.ResetTimer()
