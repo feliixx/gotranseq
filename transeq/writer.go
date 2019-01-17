@@ -27,14 +27,11 @@ type writer struct {
 	// if in trim mode, nb of bytes to trim (nb of successive 'X', '*' and '\n'
 	// from right end of the sequence)
 	toTrim int
-	// array storing the AA code at the corresponding codon index
-	codes [arrayCodeSize]byte
 }
 
-func newWriter(codeMap map[string]byte, clean bool) *writer {
+func newWriter() *writer {
 	return &writer{
-		buf:   bytes.NewBuffer(make([]byte, 0, maxBufferSize)),
-		codes: createArrayCode(codeMap, clean),
+		buf: bytes.NewBuffer(make([]byte, 0, maxBufferSize)),
 	}
 }
 
@@ -65,16 +62,16 @@ const (
 	unknown = 'X'
 )
 
-func (w *writer) writeAA(n1, n2, n3 byte) {
+func (w *writer) writeAA(aa byte) {
 
 	if w.currentLineLen == maxLineSize {
 		w.newLine()
 	}
-	aaCode := w.codes[codonCode(n1, n2, n3)]
-	w.buf.WriteByte(aaCode)
+
+	w.buf.WriteByte(aa)
 	w.currentLineLen++
 
-	if aaCode == stop || aaCode == unknown {
+	if aa == stop || aa == unknown {
 		w.toTrim++
 	} else {
 		w.toTrim = 0
@@ -105,69 +102,4 @@ func (w *writer) flush(out io.Writer, cancel context.CancelFunc, errs chan error
 		cancel()
 	}
 	w.buf.Reset()
-}
-
-var letterCode = map[byte]uint8{
-	'A': aCode,
-	'C': cCode,
-	'T': tCode,
-	'G': gCode,
-	'N': nCode,
-	'U': uCode,
-}
-
-// create the code map according to the selected table code
-func createArrayCode(codeMap map[string]byte, clean bool) [arrayCodeSize]byte {
-
-	var twoLetterMap = map[string][]byte{}
-	var codes [arrayCodeSize]byte
-	for i := range codes {
-		codes[i] = unknown
-	}
-	for codon, aaCode := range codeMap {
-
-		if !(clean && aaCode == stop) {
-			// codon is always a 3 char string, for example 'ACG'
-			// each  nucleotide of the codon is represented by an uint8
-			n1, n2, n3 := letterCode[codon[0]], letterCode[codon[1]], letterCode[codon[2]]
-			codes[codonCode(n1, n2, n3)] = aaCode
-		}
-
-		// in some case, all codon for an AA will start with the same
-		// two nucleotid
-		// for example:
-		// GTC -> 'V'
-		// GTG -> 'V'
-		aaCodeArray, ok := twoLetterMap[codon[:2]]
-		if !ok {
-			twoLetterMap[codon[:2]] = []byte{aaCode}
-		} else {
-			twoLetterMap[codon[:2]] = append(aaCodeArray, aaCode)
-		}
-	}
-
-	for twoLetterCodon, aaCodeArray := range twoLetterMap {
-
-		aaCode := aaCodeArray[0]
-		uniqueAA := true
-		for _, c := range aaCodeArray {
-			if c != aaCode {
-				uniqueAA = false
-				break
-			}
-		}
-		if uniqueAA {
-
-			if clean && aaCode == stop {
-				continue
-			}
-			n1, n2 := letterCode[twoLetterCodon[0]], letterCode[twoLetterCodon[1]]
-			codes[codonCode(n1, n2, nCode)] = aaCode
-		}
-	}
-	return codes
-}
-
-func codonCode(n1, n2, n3 byte) uint32 {
-	return uint32(n1) | uint32(n2)<<8 | uint32(n3)<<16
 }

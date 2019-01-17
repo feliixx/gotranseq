@@ -22,6 +22,75 @@ type Options struct {
 	NumWorker   int    `short:"n" long:"numcpu" value-name:"<n>" description:"Number of threads to use, default is number of CPU"`
 }
 
+var letterCode = map[byte]uint8{
+	'A': aCode,
+	'C': cCode,
+	'T': tCode,
+	'G': gCode,
+	'N': nCode,
+	'U': uCode,
+}
+
+// create the code map according to the selected table code
+func createArrayCode(tableCode int, clean bool) ([arrayCodeSize]byte, error) {
+
+	var twoLetterMap = map[string][]byte{}
+	var codes [arrayCodeSize]byte
+	for i := range codes {
+		codes[i] = unknown
+	}
+
+	codeMap, err := ncbicode.LoadTableCode(tableCode)
+	if err != nil {
+		return codes, err
+	}
+
+	for codon, aaCode := range codeMap {
+
+		if !(clean && aaCode == stop) {
+			// codon is always a 3 char string, for example 'ACG'
+			// each  nucleotide of the codon is represented by an uint8
+			n1, n2, n3 := letterCode[codon[0]], letterCode[codon[1]], letterCode[codon[2]]
+			index := uint32(n1) | uint32(n2)<<8 | uint32(n3)<<16
+			codes[index] = aaCode
+		}
+
+		// in some case, all codon for an AA will start with the same
+		// two nucleotid
+		// for example:
+		// GTC -> 'V'
+		// GTG -> 'V'
+		aaCodeArray, ok := twoLetterMap[codon[:2]]
+		if !ok {
+			twoLetterMap[codon[:2]] = []byte{aaCode}
+		} else {
+			twoLetterMap[codon[:2]] = append(aaCodeArray, aaCode)
+		}
+	}
+
+	for twoLetterCodon, aaCodeArray := range twoLetterMap {
+
+		aaCode := aaCodeArray[0]
+		uniqueAA := true
+		for _, c := range aaCodeArray {
+			if c != aaCode {
+				uniqueAA = false
+				break
+			}
+		}
+		if uniqueAA {
+
+			if clean && aaCode == stop {
+				continue
+			}
+			n1, n2 := letterCode[twoLetterCodon[0]], letterCode[twoLetterCodon[1]]
+			index := uint32(n1) | uint32(n2)<<8
+			codes[index] = aaCode
+		}
+	}
+	return codes, nil
+}
+
 var frameMap = map[string][6]int{
 	"1":  {1, 0, 0, 0, 0, 0},
 	"2":  {0, 1, 0, 0, 0, 0},
@@ -49,8 +118,9 @@ func computeFrames(frameName string) (frames [6]int, reverse bool, err error) {
 }
 
 const (
+	mb = 1 << (10 * 2)
 	// size of the buffer for writing to file
-	maxBufferSize = 1024 * 1024 * 10
+	maxBufferSize = 5 * mb
 )
 
 // Translate read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
@@ -61,12 +131,12 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 		return err
 	}
 
-	codeMap, err := ncbicode.LoadTableCode(options.Table)
+	codes, err := createArrayCode(options.Table, options.Clean)
 	if err != nil {
 		return err
 	}
 
-	fnaSequences := make(chan encodedSequence, 10)
+	fnaSequences := make(chan encodedSequence, 100)
 	errs := make(chan error, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -82,7 +152,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 			defer wg.Done()
 
 			var startPos [3]int
-			w := newWriter(codeMap, options.Clean)
+			w := newWriter()
 
 			for sequence := range fnaSequences {
 
@@ -108,28 +178,26 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 					w.writeID(sequence[4:idSize], frameIndex)
 					w.newLine()
-
 					w.toTrim = 0
-					w.currentLineLen = 0
 
 					// read the sequence 3 letters at a time, starting at a specific position
 					// corresponding to the frame
 					for pos := startPos + 2 + idSize; pos < len(sequence); pos += 3 {
-						n1, n2, n3 := sequence[pos-2], sequence[pos-1], sequence[pos]
-						w.writeAA(n1, n2, n3)
+						index := uint32(sequence[pos-2]) | uint32(sequence[pos-1])<<8 | uint32(sequence[pos])<<16
+						w.writeAA(codes[index])
 					}
 
 					// the last codon is only 2 nucleotid long, try to guess
 					// the corresponding AA
 					if (nuclSeqLength-startPos)%3 == 2 {
-						n1, n2 := sequence[len(sequence)-2], sequence[len(sequence)-1]
-						w.writeAA(n1, n2, nCode)
+						index := uint32(sequence[len(sequence)-2]) | uint32(sequence[len(sequence)-1])<<8
+						w.writeAA(codes[index])
 					}
 
 					// the last codon is only 1 nucleotid long, no way to guess
 					// the corresponding AA
 					if (nuclSeqLength-startPos)%3 == 1 {
-						w.writeAA(nCode, nCode, nCode)
+						w.writeAA(unknown)
 					}
 
 					if options.Trim && w.toTrim > 0 {
@@ -286,21 +354,21 @@ func encodeSequence(buf *bytes.Buffer, idSize int) encodedSequence {
 	// convert the sequence of bytes to an array of uint8 codes,
 	// so a codon (3 nucleotides | 3 bytes ) can be represented
 	// as an uint32
-	for i := 4 + idSize; i < len(s); i++ {
+	for i, b := range s[4+idSize:] {
 
-		switch s[i] {
+		switch b {
 		case 'A':
-			s[i] = aCode
+			s[4+idSize+i] = aCode
 		case 'C':
-			s[i] = cCode
+			s[4+idSize+i] = cCode
 		case 'G':
-			s[i] = gCode
+			s[4+idSize+i] = gCode
 		case 'T', 'U':
-			s[i] = tCode
+			s[4+idSize+i] = tCode
 		case 'N':
-			s[i] = nCode
+			s[4+idSize+i] = nCode
 		default:
-			fmt.Printf("WARNING: invalid char in sequence %s: %s, ignoring", s[4+idSize:], string(s[i]))
+			fmt.Printf("WARNING: invalid char in sequence %s: %s, ignoring", s[4+idSize:], string(s[i+4+idSize]))
 		}
 	}
 	return s
