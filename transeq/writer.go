@@ -55,7 +55,6 @@ func (w *writer) writeID(seqHeader []byte, frameIndex int) {
 }
 
 const (
-	// max line size for sequence
 	maxLineSize = 60
 
 	stop    = '*'
@@ -84,8 +83,6 @@ func (w *writer) newLine() {
 	w.toTrim++
 }
 
-// remove the last toTrim bytes of the buffer
-// as they are 'X', '*' or '\n'
 func (w *writer) Trim() {
 	w.buf.Truncate(w.buf.Len() - w.toTrim)
 	w.currentLineLen -= w.toTrim

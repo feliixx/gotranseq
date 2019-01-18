@@ -54,35 +54,25 @@ func createArrayCode(tableCode int, clean bool) ([arrayCodeSize]byte, error) {
 			index := uint32(n1) | uint32(n2)<<8 | uint32(n3)<<16
 			codes[index] = aaCode
 		}
-
 		// in some case, all codon for an AA will start with the same
-		// two nucleotid
-		// for example:
+		// two nucleotid, for example:
 		// GTC -> 'V'
 		// GTG -> 'V'
 		aaCodeArray, ok := twoLetterMap[codon[:2]]
 		if !ok {
 			twoLetterMap[codon[:2]] = []byte{aaCode}
 		} else {
-			twoLetterMap[codon[:2]] = append(aaCodeArray, aaCode)
+			if aaCode != aaCodeArray[0] {
+				twoLetterMap[codon[:2]] = append(aaCodeArray, aaCode)
+			}
 		}
 	}
 
 	for twoLetterCodon, aaCodeArray := range twoLetterMap {
 
 		aaCode := aaCodeArray[0]
-		uniqueAA := true
-		for _, c := range aaCodeArray {
-			if c != aaCode {
-				uniqueAA = false
-				break
-			}
-		}
-		if uniqueAA {
+		if len(aaCodeArray) == 1 && !(clean && aaCode == stop) {
 
-			if clean && aaCode == stop {
-				continue
-			}
 			n1, n2 := letterCode[twoLetterCodon[0]], letterCode[twoLetterCodon[1]]
 			index := uint32(n1) | uint32(n2)<<8
 			codes[index] = aaCode
@@ -91,30 +81,28 @@ func createArrayCode(tableCode int, clean bool) ([arrayCodeSize]byte, error) {
 	return codes, nil
 }
 
-var frameMap = map[string][6]int{
-	"1":  {1, 0, 0, 0, 0, 0},
-	"2":  {0, 1, 0, 0, 0, 0},
-	"3":  {0, 0, 1, 0, 0, 0},
-	"F":  {1, 1, 1, 0, 0, 0},
-	"-1": {0, 0, 0, 1, 0, 0},
-	"-2": {0, 0, 0, 0, 1, 0},
-	"-3": {0, 0, 0, 0, 0, 1},
-	"R":  {0, 0, 0, 1, 1, 1},
-	"6":  {1, 1, 1, 1, 1, 1},
-}
-
 func computeFrames(frameName string) (frames [6]int, reverse bool, err error) {
 
-	frames, ok := frameMap[frameName]
-	if !ok {
-		return frames, reverse, fmt.Errorf("wrong value for -f | --frame parameter: %s", frameName)
+	var frameMap = map[string]struct {
+		frames  [6]int
+		reverse bool
+	}{
+		"1":  {[6]int{1, 0, 0, 0, 0, 0}, false},
+		"2":  {[6]int{0, 1, 0, 0, 0, 0}, false},
+		"3":  {[6]int{0, 0, 1, 0, 0, 0}, false},
+		"F":  {[6]int{1, 1, 1, 0, 0, 0}, false},
+		"-1": {[6]int{0, 0, 0, 1, 0, 0}, true},
+		"-2": {[6]int{0, 0, 0, 0, 1, 0}, true},
+		"-3": {[6]int{0, 0, 0, 0, 0, 1}, true},
+		"R":  {[6]int{0, 0, 0, 1, 1, 1}, true},
+		"6":  {[6]int{1, 1, 1, 1, 1, 1}, true},
 	}
 
-	switch frameName {
-	case "-1", "-2", "-3", "R", "6":
-		reverse = true
+	f, ok := frameMap[frameName]
+	if !ok {
+		return frames, false, fmt.Errorf("wrong value for -f | --frame parameter: %s", frameName)
 	}
-	return frames, reverse, nil
+	return f.frames, f.reverse, nil
 }
 
 const (
@@ -293,6 +281,7 @@ func readSequenceFromFasta(ctx context.Context, inputSequence io.Reader, fnaSequ
 	idSize := 0
 	buf := bytes.NewBuffer(make([]byte, 0, 512))
 	scanner := bufio.NewScanner(inputSequence)
+
 Loop:
 	for scanner.Scan() {
 
@@ -301,7 +290,6 @@ Loop:
 			continue
 		}
 		if line[0] == '>' {
-
 			if buf.Len() > 0 {
 				select {
 				case <-ctx.Done():
@@ -310,12 +298,12 @@ Loop:
 				}
 				fnaSequences <- encodeSequence(buf, idSize)
 			}
+			buf.Reset()
 			idSize = len(line)
 		}
-		// if the line doesn't start with '>', then it's a part of the
-		// nucleotide sequence, so write it to the buffer
 		buf.Write(line)
 	}
+
 	fnaSequences <- encodeSequence(buf, idSize)
 
 	close(fnaSequences)
@@ -323,9 +311,9 @@ Loop:
 
 // a type to hold an encoded fasta sequence
 //
-//	s[0:4] stores the size of the sequence id + the size of the comment as an uint32 (little endian)
-//  s[4:idSize] stores the sequence id, and the comment id there is one
-//  s[idSize:] stores the nucl sequence
+// s[0:4] stores the size of the sequence id + the size of the comment as an uint32 (little endian)
+// s[4:idSize] stores the sequence id, and the comment id there is one
+// s[idSize:] stores the nucl sequence
 type encodedSequence []byte
 
 var pool = sync.Pool{
@@ -335,7 +323,6 @@ var pool = sync.Pool{
 }
 
 func getSizedSlice(size int) encodedSequence {
-
 	s := pool.Get().(encodedSequence)
 	for len(s) < size {
 		s = append(s, byte(0))
@@ -349,14 +336,10 @@ func encodeSequence(buf *bytes.Buffer, idSize int) encodedSequence {
 
 	binary.LittleEndian.PutUint32(s[0:4], uint32(4+idSize))
 	copy(s[4:], buf.Bytes())
-	buf.Reset()
 
-	// convert the sequence of bytes to an array of uint8 codes,
-	// so a codon (3 nucleotides | 3 bytes ) can be represented
-	// as an uint32
-	for i, b := range s[4+idSize:] {
+	for i, n := range s[4+idSize:] {
 
-		switch b {
+		switch n {
 		case 'A':
 			s[4+idSize+i] = aCode
 		case 'C':
