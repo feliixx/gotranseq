@@ -227,7 +227,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 					goto Translate
 				}
 
-				if w.buf.Len() > maxBufferSize {
+				if len(w.buf) > maxBufferSize {
 					w.flush(out, cancel, errs)
 				}
 				pool.Put(sequence)
