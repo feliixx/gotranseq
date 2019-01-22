@@ -4,3 +4,4 @@ gotranseq
 transeq/testdata/big.fna
 transeq/testdata/med.fna
 *.txt
+*.test
