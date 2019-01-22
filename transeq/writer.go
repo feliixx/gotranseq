@@ -8,17 +8,16 @@ import (
 )
 
 const (
-	// nCode has to be 0 in order to compute two-letters code
-	nCode uint8 = iota
-	aCode
-	cCode
-	tCode
-	gCode
-	uCode = tCode
+	mb = 1 << (10 * 2)
+	// size of the buffer for writing to file
+	maxBufferSize = 5 * mb
+	// suffixes ta add to sequence id for each frame
+	suffixes = "123456"
 
-	// Length of the array to store code/bytes
-	// uses gCode because it's the biggest uint8 of all codes
-	arrayCodeSize = (uint32(gCode) | uint32(gCode)<<8 | uint32(gCode)<<16) + 1
+	maxLineSize = 60
+
+	stop    = '*'
+	unknown = 'X'
 )
 
 type writer struct {
@@ -35,12 +34,9 @@ func newWriter() *writer {
 	}
 }
 
-// suffixes ta add to sequence id for each frame
-const suffixes = "123456"
-
 // sequence id should look like
 // >sequenceID_<frame> comment
-func (w *writer) writeID(seqHeader []byte, frameIndex int) {
+func (w *writer) writeHeader(seqHeader []byte, frameIndex int) {
 	end := bytes.IndexByte(seqHeader, ' ')
 	if end != -1 {
 		w.buf.Write(seqHeader[:end])
@@ -54,19 +50,11 @@ func (w *writer) writeID(seqHeader []byte, frameIndex int) {
 	}
 }
 
-const (
-	maxLineSize = 60
-
-	stop    = '*'
-	unknown = 'X'
-)
-
 func (w *writer) writeAA(aa byte) {
 
 	if w.currentLineLen == maxLineSize {
 		w.newLine()
 	}
-
 	w.buf.WriteByte(aa)
 	w.currentLineLen++
 
@@ -89,7 +77,6 @@ func (w *writer) Trim() {
 }
 
 func (w *writer) flush(out io.Writer, cancel context.CancelFunc, errs chan error) {
-
 	_, err := out.Write(w.buf.Bytes())
 	if err != nil {
 		select {
