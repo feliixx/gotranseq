@@ -20,15 +20,7 @@ var pool = sync.Pool{
 	},
 }
 
-func getSizedSlice(size int) encodedSequence {
-	s := pool.Get().(encodedSequence)
-	for len(s) < size {
-		s = append(s, byte(0))
-	}
-	return s[:size]
-}
-
-func encodeSequence(buf *bytes.Buffer, headerSize int) encodedSequence {
+func newEncodedSequence(buf *bytes.Buffer, headerSize int) encodedSequence {
 
 	s := getSizedSlice(4 + buf.Len())
 	// reserve 4 bytes to store the header size as an uint32
@@ -53,6 +45,14 @@ func encodeSequence(buf *bytes.Buffer, headerSize int) encodedSequence {
 		}
 	}
 	return s
+}
+
+func getSizedSlice(size int) encodedSequence {
+	s := pool.Get().(encodedSequence)
+	for len(s) < size {
+		s = append(s, byte(0))
+	}
+	return s[:size]
 }
 
 func (s encodedSequence) header() []byte {

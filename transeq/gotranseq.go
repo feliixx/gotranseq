@@ -146,8 +146,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 			defer wg.Done()
 
-			w := newWriter()
-			startPos := [3]int{0, 1, 2}
+			w := newWriter(codes, framesToGenerate, reverse, options.Alternative, options.Trim)
 
 			for sequence := range fnaSequences {
 
@@ -157,75 +156,7 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 				default:
 				}
 
-				frameIndex := 0
-				if reverse && !options.Alternative {
-					startPos[0], startPos[1], startPos[2] = 0, 1, 2
-				}
-
-			Translate:
-				for _, startPos := range startPos {
-
-					if framesToGenerate[frameIndex] == 0 {
-						frameIndex++
-						continue
-					}
-
-					w.writeHeader(sequence.header(), frameIndex)
-					w.newLine()
-					w.toTrim = 0
-
-					// read the sequence 3 letters at a time, starting at a specific position
-					// corresponding to the frame
-					for pos := sequence.headerSize() + startPos; pos < len(sequence)-2; pos += 3 {
-						index := uint32(sequence[pos]) | uint32(sequence[pos+1])<<8 | uint32(sequence[pos+2])<<16
-						w.writeAA(codes[index])
-					}
-
-					switch (sequence.nuclSeqSize() - startPos) % 3 {
-					case 2:
-						// the last codon is only 2 nucleotid long, try to guess
-						// the corresponding AA
-						index := uint32(sequence[len(sequence)-2]) | uint32(sequence[len(sequence)-1])<<8
-						w.writeAA(codes[index])
-					case 1:
-						// the last codon is only 1 nucleotid long, no way to guess
-						// the corresponding AA
-						w.writeAA(unknown)
-					}
-
-					if options.Trim && w.toTrim > 0 {
-						w.Trim()
-					}
-
-					if w.currentLineLen != 0 {
-						w.newLine()
-					}
-					frameIndex++
-				}
-
-				if reverse && frameIndex < 6 {
-
-					sequence.reverseComplement()
-
-					if !options.Alternative {
-						// Staden convention: Frame -1 is the reverse-complement of the sequence
-						// having the same codon phase as frame 1. Frame -2 is the same phase as
-						// frame 2. Frame -3 is the same phase as frame 3
-						//
-						// use the matrix to keep track of the forward frame as it depends on the
-						// length of the sequence
-						switch sequence.nuclSeqSize() % 3 {
-						case 0:
-							startPos[0], startPos[1], startPos[2] = 0, 2, 1
-						case 1:
-							startPos[0], startPos[1], startPos[2] = 1, 0, 2
-						case 2:
-							startPos[0], startPos[1], startPos[2] = 2, 1, 0
-						}
-					}
-					// run the same loop, but with the reverse-complemented sequence
-					goto Translate
-				}
+				w.translate(sequence)
 
 				if len(w.buf) > maxBufferSize {
 					w.flush(out, cancel, errs)
@@ -277,7 +208,7 @@ Loop:
 					break Loop
 				default:
 				}
-				fnaSequences <- encodeSequence(buf, headerSize)
+				fnaSequences <- newEncodedSequence(buf, headerSize)
 			}
 			buf.Reset()
 			headerSize = len(line)
@@ -285,7 +216,7 @@ Loop:
 		buf.Write(line)
 	}
 
-	fnaSequences <- encodeSequence(buf, headerSize)
+	fnaSequences <- newEncodedSequence(buf, headerSize)
 
 	close(fnaSequences)
 }
