@@ -44,7 +44,6 @@ var letterCode = map[byte]uint8{
 	'U': uCode,
 }
 
-// create the code map according to the selected table code
 func createCodeArray(tableCode int, clean bool) ([arrayCodeSize]byte, error) {
 
 	var codes [arrayCodeSize]byte
@@ -118,7 +117,8 @@ func computeFrames(frameName string) (frames [6]int, reverse bool, err error) {
 	return f.frames, f.reverse, nil
 }
 
-// Translate read a fata file, translate each sequence to the corresponding prot sequence in the specified frame
+// Translate read a fata file and translate each sequence to the corresponding prot sequence
+// with the specified options
 func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 
 	framesToGenerate, reverse, err := computeFrames(options.Frame)

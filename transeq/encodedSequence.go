@@ -10,15 +10,9 @@ import (
 // a type to hold an encoded fasta sequence
 //
 // s[0:4] stores the size of the sequence header (sequence id + comment) as an uint32 (little endian)
-// s[4:headerSize] stores the sequence id, and the comment if there is one
+// s[4:headerSize] stores the sequence header
 // s[headerSize:] stores the nucl sequence
 type encodedSequence []byte
-
-var pool = sync.Pool{
-	New: func() interface{} {
-		return make(encodedSequence, 512)
-	},
-}
 
 func newEncodedSequence(buf *bytes.Buffer, headerSize int) encodedSequence {
 
@@ -45,6 +39,12 @@ func newEncodedSequence(buf *bytes.Buffer, headerSize int) encodedSequence {
 		}
 	}
 	return s
+}
+
+var pool = sync.Pool{
+	New: func() interface{} {
+		return make(encodedSequence, 512)
+	},
 }
 
 func getSizedSlice(size int) encodedSequence {

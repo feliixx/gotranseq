@@ -11,7 +11,7 @@ const (
 	mb = 1 << (10 * 2)
 	// size of the buffer for writing to file
 	maxBufferSize = 5 * mb
-	// suffixes ta add to sequence id for each frame
+	// suffixes to add to sequence id for each frame
 	suffixes    = "123456"
 	maxLineSize = 60
 	stop        = '*'
@@ -55,7 +55,6 @@ func (w *writer) reset() {
 func (w *writer) translate(sequence encodedSequence) {
 
 	w.reset()
-
 	w.translate3Frames(sequence)
 
 	if w.reverse {
@@ -90,7 +89,6 @@ func (w *writer) translate3Frames(sequence encodedSequence) {
 			continue
 		}
 		w.writeHeader(sequence.header())
-		w.newLine()
 
 		// read the sequence 3 letters at a time, starting at a specific position
 		// corresponding to the frame
@@ -110,7 +108,6 @@ func (w *writer) translate3Frames(sequence encodedSequence) {
 			// the corresponding AA
 			w.writeAA(unknown)
 		}
-
 		w.trimAndReturn()
 		w.frameIndex++
 	}
@@ -128,6 +125,7 @@ func (w *writer) writeHeader(seqHeader []byte) {
 		w.buf = append(w.buf, seqHeader...)
 		w.buf = append(w.buf, '_', suffixes[w.frameIndex])
 	}
+	w.newLine()
 }
 
 func (w *writer) writeAA(aa byte) {
@@ -177,5 +175,5 @@ func (w *writer) flush(out io.Writer, cancel context.CancelFunc, errs chan error
 		}
 		cancel()
 	}
-	w.buf = w.buf[0:0]
+	w.buf = w.buf[:0]
 }
