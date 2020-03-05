@@ -1,4 +1,3 @@
-[![Build Status](https://travis-ci.org/feliixx/gotranseq.svg?branch=master)](https://travis-ci.org/feliixx/gotranseq)
 [![Go Report Card](https://goreportcard.com/badge/github.com/feliixx/gotranseq)](https://goreportcard.com/report/github.com/feliixx/gotranseq)
 [![codecov](https://codecov.io/gh/feliixx/gotranseq/branch/master/graph/badge.svg)](https://codecov.io/gh/feliixx/gotranseq)
 [![GoDoc](https://godoc.org/github.com/feliixx/gotranseq/transeq?status.svg)](http://godoc.org/github.com/feliixx/gotranseq/transeq)
