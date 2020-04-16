@@ -1,6 +1,6 @@
 name: Go
 
-on: [push, pull_request]
+on: [push]
 
 jobs:
 
@@ -13,10 +13,15 @@ jobs:
       uses: actions/setup-go@v1
       with:
         go-version: 1.14
-      id: go
 
     - name: Check out code
       uses: actions/checkout@v2
+
+    - name: Vet and lint code
+      run: |
+        go get -u -v golang.org/x/lint/golint
+        /home/runner/go/bin/golint -set_exit_status ./...
+        go vet ./...
 
     - name: run test 
       run: ./test.sh
