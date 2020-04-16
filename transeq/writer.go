@@ -10,7 +10,7 @@ import (
 const (
 	mb = 1 << (10 * 2)
 	// size of the buffer for writing to file
-	maxBufferSize = 5 * mb
+	maxBufferSize = 1 * mb
 	// suffixes to add to sequence id for each frame
 	suffixes    = "123456"
 	maxLineSize = 60
