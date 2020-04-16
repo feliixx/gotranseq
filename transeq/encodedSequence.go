@@ -49,8 +49,8 @@ var pool = sync.Pool{
 
 func getSizedSlice(size int) encodedSequence {
 	s := pool.Get().(encodedSequence)
-	for len(s) < size {
-		s = append(s, byte(0))
+	if cap(s) < size {
+		s = make([]byte, size)
 	}
 	return s[:size]
 }
