@@ -31,12 +31,18 @@ time ./gotranseq --sequence file.fna --outseq out.faa --frame 6 -n 2
 
 ## Installation
 
-download the latest binary from the [release page](https://github.com/feliixx/gotranseq/releases) 
+Download the binary from the [release page](https://github.com/feliixx/gotranseq/releases)
 
-or install with **go get** (require to have go installed on your machine)
+or
+
+Build from source:
+
+First, make sure that go is installed on your machine (see [install go](https://golang.org/doc/install) for details ). Then clone the repo and build it:
 
 ```
-go get -u "github.com/feliixx/gotranseq"
+git clone https://github.com/feliixx/gotranseq.git
+cd gotranseq
+go install
 ```
 
 ## Usage 
@@ -88,7 +94,7 @@ optional:
   -a, --alternative            Define frame '-1' as using the set of codons starting with the last codon of the sequence
   -T, --trim                   Removes all 'X' and '*' characters from the right end of the translation. The trimming process starts at the
                                end and continues until the next character is not a 'X' or a '*'
-  -n, --numcpu=<n>             Number of threads to use, default is number of CPU
+  -n, --numcpu=<n>             Number of worker to use (default: number of CPU)
 
 general:
   -h, --help                   Show this help message

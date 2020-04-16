@@ -7,5 +7,5 @@ type Options struct {
 	Clean       bool   `short:"c" long:"clean" description:"Replace stop codon '*' by 'X'"`
 	Alternative bool   `short:"a" long:"alternative" description:"Define frame '-1' as using the set of codons starting with the last codon of the sequence"`
 	Trim        bool   `short:"T" long:"trim" description:"Removes all 'X' and '*' characters from the right end of the translation. The trimming process starts at the end and continues until the next character is not a 'X' or a '*'"`
-	NumWorker   int    `short:"n" long:"numcpu" value-name:"<n>" description:"Number of worker to use, default is number of CPU"`
+	NumWorker   int    `short:"n" long:"numcpu" value-name:"<n>" description:"Number of worker to use (default: number of CPU)"`
 }
