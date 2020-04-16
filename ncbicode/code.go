@@ -336,6 +336,8 @@ var (
 	}
 )
 
+// available NCBI code, see https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi?chapter=tgencodes#SG1 for
+// details.
 const (
 	Standard                                                    = 0
 	VertebrateMitochondrial                                     = 2
@@ -360,7 +362,8 @@ const (
 	Peritrich                                                   = 30
 )
 
-// LoadTableCode returns a map of condon <-> AA
+// LoadTableCode returns a map of condon <-> AA generated from
+// the provided NCBI code
 func LoadTableCode(code int) (map[string]byte, error) {
 
 	tableCodon := map[string]byte{}
