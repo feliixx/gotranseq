@@ -12,10 +12,12 @@ const (
 	// size of the buffer for writing to file
 	maxBufferSize = 1 * mb
 	// suffixes to add to sequence id for each frame
-	suffixes    = "123456"
+	suffixes = "123456"
+	// max line size for the output file
 	maxLineSize = 60
-	stop        = '*'
-	unknown     = 'X'
+	// specific codons
+	stop    = '*'
+	unknown = 'X'
 )
 
 type writer struct {
@@ -99,12 +101,12 @@ func (w *writer) translate3Frames(sequence encodedSequence) {
 
 		switch (sequence.nuclSeqSize() - startPos) % 3 {
 		case 2:
-			// the last codon is only 2 nucleotid long, try to guess
+			// the last codon is only 2 nucleotide long, try to guess
 			// the corresponding AA
 			index := uint32(sequence[len(sequence)-2]) | uint32(sequence[len(sequence)-1])<<8
 			w.writeAA(w.codes[index])
 		case 1:
-			// the last codon is only 1 nucleotid long, no way to guess
+			// the last codon is only 1 nucleotide long, no way to guess
 			// the corresponding AA
 			w.writeAA(unknown)
 		}
@@ -171,9 +173,9 @@ func (w *writer) flush(out io.Writer, cancel context.CancelFunc, errs chan error
 	if err != nil {
 		select {
 		case errs <- fmt.Errorf("fail to write to output file: %v", err):
+			cancel()
 		default:
 		}
-		cancel()
 	}
 	w.buf = w.buf[:0]
 }

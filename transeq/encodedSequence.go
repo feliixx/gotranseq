@@ -11,7 +11,7 @@ import (
 //
 // s[0:4] stores the size of the sequence header (sequence id + comment) as an uint32 (little endian)
 // s[4:headerSize] stores the sequence header
-// s[headerSize:] stores the nucl sequence
+// s[headerSize:] stores the nucleic sequence
 type encodedSequence []byte
 
 func newEncodedSequence(buf *bytes.Buffer, headerSize int) encodedSequence {
@@ -86,7 +86,7 @@ func (s encodedSequence) reverseComplement() {
 		case gCode:
 			s[headerSize+i] = cCode
 		default:
-			//case N -> leave it
+			// case N -> leave it
 		}
 	}
 	// reverse the sequence
