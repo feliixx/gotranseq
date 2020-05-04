@@ -20,7 +20,7 @@ jobs:
       - name: Create linux binary
         run: |
           env GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o gotranseq
-          tar -cvzf mgodatagen_linux_x86_64.tar.gz gotranseq
+          tar -cvzf gotranseq_linux_x86_64.tar.gz gotranseq
 
       - name: Upload linux binary
         uses: svenstaro/upload-release-action@v1-release
