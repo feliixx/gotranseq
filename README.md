@@ -1,6 +1,6 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/feliixx/gotranseq)](https://goreportcard.com/report/github.com/feliixx/gotranseq)
 [![codecov](https://codecov.io/gh/feliixx/gotranseq/branch/master/graph/badge.svg)](https://codecov.io/gh/feliixx/gotranseq)
-[![GoDoc](https://godoc.org/github.com/feliixx/gotranseq/transeq?status.svg)](http://godoc.org/github.com/feliixx/gotranseq/transeq)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/feliixx/gotranseq/transeq)](https://pkg.go.dev/github.com/feliixx/gotranseq/transeq)
 
 # Gotranseq
 
@@ -42,7 +42,7 @@ First, make sure that go is installed on your machine (see [install go](https://
 ```
 git clone https://github.com/feliixx/gotranseq.git
 cd gotranseq
-go install
+go build
 ```
 
 ## Usage 
@@ -50,10 +50,10 @@ go install
 use `gotranseq --help` to print the help: 
 
 ```
-gotranseq version 0.1
+gotranseq version 0.2.2
 
 Usage:
-  gotranseq
+  gotranseq --sequence file.fna --outseq out.faa
 
 required:
   -s, --sequence=<filename>    Nucleotide sequence(s) filename

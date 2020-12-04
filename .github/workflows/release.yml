@@ -12,10 +12,10 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v2
 
-      - name: Set up Go 1.14
+      - name: Set up Go
         uses: actions/setup-go@v1
         with:
-          go-version: 1.14
+          go-version: 1.15
 
       - name: Create linux binary
         run: |
@@ -23,11 +23,10 @@ jobs:
           tar -cvzf gotranseq_linux_x86_64.tar.gz gotranseq
 
       - name: Upload linux binary
-        uses: svenstaro/upload-release-action@v1-release
+        uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: gotranseq_linux_x86_64.tar.gz
-          asset_name: gotranseq_linux_x86_64.tar.gz
           tag: ${{ github.ref }}
           overwrite: true
 
@@ -38,11 +37,10 @@ jobs:
           tar -cvzf gotranseq_macOSX_x86_64.tar.gz gotranseq
 
       - name: Upload macOSX binary
-        uses: svenstaro/upload-release-action@v1-release
+        uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: gotranseq_macOSX_x86_64.tar.gz
-          asset_name: gotranseq_macOSX_x86_64.tar.gz
           tag: ${{ github.ref }}
           overwrite: true
 
@@ -52,10 +50,9 @@ jobs:
           zip gotranseq_windows_x86_64.zip gotranseq.exe
 
       - name: Upload windows binary
-        uses: svenstaro/upload-release-action@v1-release
+        uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: gotranseq_windows_x86_64.zip
-          asset_name: gotranseq_windows_x86_64.zip
           tag: ${{ github.ref }}
           overwrite: true
