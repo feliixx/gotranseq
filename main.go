@@ -65,6 +65,7 @@ func main() {
 
 	var options GlobalOptions
 	p := flags.NewParser(&options, flags.Default&^flags.HelpFlag)
+	p.Usage = "--sequence file.fna --outseq out.faa"
 	_, err := p.Parse()
 	if err != nil {
 		fmt.Printf("wrong arguments: %v, try %s --help for more informations\n", err, toolName)
