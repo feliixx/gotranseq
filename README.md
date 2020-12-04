@@ -50,7 +50,7 @@ go build
 use `gotranseq --help` to print the help: 
 
 ```
-gotranseq version 0.2.1
+gotranseq version 0.2.2
 
 Usage:
   gotranseq --sequence file.fna --outseq out.faa
