@@ -1,30 +1,29 @@
-name: test
+name: Run test
 
-on: push
+on: [push, pull_request]
 
 jobs:
-
   build:
-    name: Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-18.04
     steps:
+      - name: Check out code
+        uses: actions/checkout@v2
 
-    - name: Set up Go
-      uses: actions/setup-go@v1
-      with:
-        go-version: 1.15
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
 
-    - name: Check out code
-      uses: actions/checkout@v2
+      - name: Vet code
+        run: go vet ./...
 
-    - name: Vet and lint code
-      run: |
-        go get -u -v golang.org/x/lint/golint
-        /home/runner/go/bin/golint -set_exit_status ./...
-        go vet ./...
+      - name: Lint code
+        uses: golangci/golangci-lint-action@v2
+        with:
+          version: v1.35.2
 
-    - name: run test 
-      run: ./test.sh
-    
-    - name: Export coverage result 
-      run: bash <(curl -s https://codecov.io/bash)
+      - name: run test
+        run: ./test.sh
+
+      - name: Export coverage result
+        run: bash <(curl -s https://codecov.io/bash)

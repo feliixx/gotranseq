@@ -9,10 +9,15 @@ import (
 	"github.com/jessevdk/go-flags"
 )
 
-const (
-	version  = "0.2.2"
-	toolName = "gotranseq"
-)
+const toolName = "gotranseq"
+
+// Version of gotranseq. Should be linked via ld_flags when compiling
+// use this to set version to last known tag:
+//
+//  go build -ldflags "-X main.Version=$(git describe --tags $(git rev-list --tags --max-count=1))"
+//
+// use debug.ReadBuildInfo() when https://github.com/golang/go/issues/37475 is implemented
+var Version string
 
 // GlobalOptions struct to store command line args
 type GlobalOptions struct {
@@ -72,12 +77,12 @@ func main() {
 		os.Exit(1)
 	}
 	if options.Help {
-		fmt.Printf("%s version %s\n\n", toolName, version)
+		fmt.Printf("%s %s\n\n", toolName, Version)
 		p.WriteHelp(os.Stdout)
 		os.Exit(0)
 	}
 	if options.Version {
-		fmt.Printf("%s version version %s\n", toolName, version)
+		fmt.Printf("%s %s\n", toolName, Version)
 		os.Exit(0)
 	}
 
