@@ -3,10 +3,7 @@ package transeq_test
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
-	"os"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -38,8 +35,9 @@ func TestAllOptions(t *testing.T) {
 
 	out := bytes.NewBuffer(make([]byte, 0, 2*1024))
 
-	for _, test := range tests {
+	for _, tt := range tests {
 
+		test := tt
 		t.Run(test.Options, func(t *testing.T) {
 
 			opts, err := getOptionsAndName(test.Options)
@@ -75,44 +73,4 @@ func getOptionsAndName(opts string) (options transeq.Options, err error) {
 	_, err = flags.ParseArgs(&options, flagOpts)
 
 	return options, err
-}
-
-func compareByline(t *testing.T, want, got string) {
-
-	wantLines := strings.Split(want, "\n")
-	gotLines := strings.Split(got, "\n")
-
-	if len(wantLines) != len(gotLines) {
-		t.Errorf("different number of lines\nexpected %s\nbut got\n%s\n", want, got)
-	}
-
-	diffs := map[int]string{}
-
-	for i := range wantLines {
-		if wantLines[i] != gotLines[i] {
-			diffs[i] = fmt.Sprintf("\nwant:\n%s\ngot:\n%s\n", strconv.Quote(wantLines[i]), strconv.Quote(gotLines[i]))
-		}
-	}
-
-	t.Errorf("found differences in lines\n%v\n", diffs)
-}
-
-func BenchmarkTranslate(b *testing.B) {
-
-	input, err := os.Open("testdata/med.fna")
-	if err != nil {
-		b.Error(err)
-	}
-
-	options := transeq.Options{
-		Frame:     "6",
-		NumWorker: 1,
-	}
-
-	b.ResetTimer()
-
-	for n := 0; n < b.N; n++ {
-		transeq.Translate(input, ioutil.Discard, options)
-	}
-
 }
