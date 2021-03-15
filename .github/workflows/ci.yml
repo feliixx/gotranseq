@@ -3,7 +3,7 @@ name: Run test
 on: [push, pull_request]
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-18.04
     steps:
       - name: Check out code
@@ -20,7 +20,7 @@ jobs:
       - name: Lint code
         uses: golangci/golangci-lint-action@v2
         with:
-          version: v1.35.2
+          version: v1.38
 
       - name: run test
         run: ./test.sh
