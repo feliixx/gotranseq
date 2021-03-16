@@ -29,6 +29,8 @@ time ./gotranseq --sequence file.fna --outseq out.faa --frame 6 -n 2
 7,75s user 0,98s system 159% cpu 5,472 total
 ```
 
+Works on Linux, Mac and windows
+
 ## Installation
 
 Download the binary from the [release page](https://github.com/feliixx/gotranseq/releases)
@@ -50,7 +52,7 @@ go build
 use `gotranseq --help` to print the help: 
 
 ```
-gotranseq version 0.2.2
+gotranseq version 0.3.0
 
 Usage:
   gotranseq --sequence file.fna --outseq out.faa
