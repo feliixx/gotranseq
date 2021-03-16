@@ -32,10 +32,9 @@ func newEncodedSequence(buf *bytes.Buffer, headerSize int) encodedSequence {
 			s[headerSize+i] = gCode
 		case 'T', 'U':
 			s[headerSize+i] = tCode
-		case 'N':
-			s[headerSize+i] = nCode
 		default:
-			fmt.Printf("WARNING: invalid char in sequence %s: %s, ignoring", s[headerSize:], string(s[headerSize+i]))
+			s[headerSize+i] = nCode
+			fmt.Printf("WARNING: invalid char in sequence %s: '%s' ( pos %d), replacing with 'N'\n", string(s[:headerSize]), string(n), i)
 		}
 	}
 	return s
