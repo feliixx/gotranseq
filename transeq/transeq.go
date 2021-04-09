@@ -23,6 +23,8 @@ const (
 	// Length of the array to store codon <-> AA correspondance
 	// uses gCode because it's the biggest uint8 of all codes
 	arrayCodeSize = (uint32(gCode) | uint32(gCode)<<8 | uint32(gCode)<<16) + 1
+
+	maxSeqLength = 100 * mb
 )
 
 var letterCode = map[byte]uint8{
@@ -181,7 +183,9 @@ func Translate(inputSequence io.Reader, out io.Writer, options Options) error {
 func readSequenceFromFasta(ctx context.Context, inputSequence io.Reader, fnaSequences chan<- encodedSequence) {
 
 	scanner := bufio.NewScanner(inputSequence)
-	buf := bytes.NewBuffer(make([]byte, 0, 512))
+	scanner.Buffer(make([]byte, 0, 4096), maxSeqLength)
+
+	buf := bytes.NewBuffer(make([]byte, 0, 4096))
 	headerSize := 0
 
 Loop:
