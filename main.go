@@ -15,8 +15,6 @@ const toolName = "gotranseq"
 // use this to set version to last known tag:
 //
 //  go build -ldflags "-X main.Version=$(git describe --tags $(git rev-list --tags --max-count=1))"
-//
-// use debug.ReadBuildInfo() when https://github.com/golang/go/issues/37475 is implemented
 var Version string
 
 // GlobalOptions struct to store command line args
