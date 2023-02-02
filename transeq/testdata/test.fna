@@ -45,3 +45,5 @@ ATN
 >sequence13 sequence with invalid nucleotide (S, K)
 SCGAGTCATCTCCTATGCAGGCTGCCTGACTCAGATGTCTCTCTTTGCCATTTKTGGAGG
 ATGGAAGAGAGACATGC
+>sequence14 with lowercase nucleotide
+aatttaccgagacagcaatgatagctagagatcatcag

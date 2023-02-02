@@ -27,15 +27,6 @@ const (
 	maxSeqLength = 100 * mb
 )
 
-var letterCode = map[byte]uint8{
-	'A': aCode,
-	'C': cCode,
-	'T': tCode,
-	'G': gCode,
-	'N': nCode,
-	'U': uCode,
-}
-
 func createCodeArray(tableCode int, clean bool) ([arrayCodeSize]byte, error) {
 
 	var codes [arrayCodeSize]byte
@@ -47,6 +38,15 @@ func createCodeArray(tableCode int, clean bool) ([arrayCodeSize]byte, error) {
 	codeMap, err := ncbicode.LoadTableCode(tableCode)
 	if err != nil {
 		return codes, err
+	}
+	
+	letterCode := map[byte]uint8{
+		'A': aCode,
+		'C': cCode,
+		'T': tCode,
+		'G': gCode,
+		'N': nCode,
+		'U': uCode,
 	}
 
 	for codon, aaCode := range codeMap {
