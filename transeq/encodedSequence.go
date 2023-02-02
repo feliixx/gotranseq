@@ -24,15 +24,15 @@ func newEncodedSequence(buf *bytes.Buffer, headerSize int) encodedSequence {
 
 	for i, n := range s[headerSize:] {
 		switch n {
-		case 'A':
+		case 'A', 'a':
 			s[headerSize+i] = aCode
-		case 'C':
+		case 'C', 'c':
 			s[headerSize+i] = cCode
-		case 'G':
+		case 'G', 'g':
 			s[headerSize+i] = gCode
-		case 'T', 'U':
+		case 'T', 'U', 't', 'u':
 			s[headerSize+i] = tCode
-		case 'N':
+		case 'N', 'n':
 			s[headerSize+i] = nCode
 		default:
 			s[headerSize+i] = nCode
